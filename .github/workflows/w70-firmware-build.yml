@@ -40,20 +40,10 @@ jobs:
           test -s out/lpt570.bin
           file out/lpt570.bin
           chmod +x tools/IMG_Tools tools/lzma
-          ./tools/IMG_Tools out/lpt570.bin ./out/lpt570-upgrade.bin ./tools/lzma "HF-LPx70x1 Image" --version3
-          python3 lpx70_upgrade.py ./out/lpt570-upgrade.bin
-          test -s out/lpt570-upgrade.bin
-          cp out/lpt570-upgrade.bin ../BAISON_W70_Experimental_HiFlying_OTA.bin
-          python3 - <<'PY'
-          from pathlib import Path
-          p=Path("../BAISON_W70_Experimental_HiFlying_OTA.bin")
-          b=p.read_bytes()
-          print("OTA size",len(b),"header",b[:32].hex())
-          assert b.startswith(b"HF-LPx70x1 Image")
-          assert 256<len(b)<600000
-          PY
+          ./tools/IMG_Tools out/lpt570.bin ./out/lpt570-upgrade.bin ./tools/lzma "EPORT-PW41 Image" --version3
+          python3 ../firmware/w70/package_ota.py out/lpt570-upgrade.bin ../BAISON_W70_V6_Experimental_W70_OTA.bin
       - uses: actions/upload-artifact@v4
         with:
-          name: BAISON-W70-Experimental-OTA-BIN
-          path: BAISON_W70_Experimental_HiFlying_OTA.bin
+          name: BAISON-W70-V6-Experimental-Factory-Envelope
+          path: BAISON_W70_V6_Experimental_W70_OTA.bin
           if-no-files-found: error
