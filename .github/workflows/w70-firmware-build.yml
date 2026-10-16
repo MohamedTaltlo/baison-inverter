@@ -7,43 +7,49 @@ permissions:
   contents: read
 jobs:
   firmware:
-    runs-on: windows-latest
-    timeout-minutes: 45
+    runs-on: ubuntu-22.04
+    timeout-minutes: 30
     steps:
       - uses: actions/checkout@v4
-      - uses: msys2/setup-msys2@v2
-        with:
-          msystem: MINGW64
-          update: true
-          install: >-
-            make
-            python
-            coreutils
-            file
+      - name: Install Linux RISC-V toolchain
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y --no-install-recommends make python3 gcc-riscv64-unknown-elf binutils-riscv64-unknown-elf
       - name: Clone HiFlying SDK
-        shell: pwsh
         run: |
           git clone --depth 1 https://github.com/freshev/BL602-UART-bridge.git sdk_upstream
-          if ($LASTEXITCODE -ne 0) { throw 'Clone failed' }
       - name: Integrate BAISON read-only firmware
-        shell: msys2 {0}
         run: |
           python3 firmware/w70/integrate.py
-      - name: Compile customized BL602 image and HiFlying OTA
-        shell: msys2 {0}
+      - name: Compile customized BL602 image
+        shell: bash
         run: |
+          set -euxo pipefail
           cd sdk_upstream
           export PROJECT_NAME=lpt570
-          ls -l ./toolchain/bin/riscv64-unknown-elf-gcc.exe
-          ./toolchain/bin/riscv64-unknown-elf-gcc.exe --version
-          printf 'int w70_test(void){return 42;}\n' > test_compiler.c
-          ./toolchain/bin/riscv64-unknown-elf-gcc.exe -c test_compiler.c -o test_compiler.o -march=rv32imafc -mabi=ilp32f
-          make -j1 V=1
+          for cmd in gcc ar as ld objcopy objdump nm ranlib readelf size strip; do
+            target="/usr/bin/riscv64-unknown-elf-$cmd"
+            if [ -x "$target" ]; then
+              ln -sf "$target" "./toolchain/bin/riscv64-unknown-elf-$cmd"
+            fi
+          done
+          ./toolchain/bin/riscv64-unknown-elf-gcc -v
+          make -j2 V=1
+          test -s out/lpt570.bin
           file out/lpt570.bin
-          ./tools/IMG_Tools.exe out/lpt570.bin ./out/lpt570-upgrade.bin ./tools/lzma.exe "HF-LPx70x1 Image" --version3
+          chmod +x tools/IMG_Tools tools/lzma
+          ./tools/IMG_Tools out/lpt570.bin ./out/lpt570-upgrade.bin ./tools/lzma "HF-LPx70x1 Image" --version3
           python3 lpx70_upgrade.py ./out/lpt570-upgrade.bin
-          ls -lah out/lpt570*.bin
+          test -s out/lpt570-upgrade.bin
           cp out/lpt570-upgrade.bin ../BAISON_W70_Experimental_HiFlying_OTA.bin
+          python3 - <<'PY'
+          from pathlib import Path
+          p=Path("../BAISON_W70_Experimental_HiFlying_OTA.bin")
+          b=p.read_bytes()
+          print("OTA size",len(b),"header",b[:32].hex())
+          assert b.startswith(b"HF-LPx70x1 Image")
+          assert 256<len(b)<600000
+          PY
       - uses: actions/upload-artifact@v4
         with:
           name: BAISON-W70-Experimental-OTA-BIN
