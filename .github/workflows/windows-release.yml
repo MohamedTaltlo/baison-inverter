@@ -1,0 +1,63 @@
+name: BAISON 4.0.0 Build and Release
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+permissions:
+  contents: write
+jobs:
+  windows-release:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Install build tools
+        run: python -m pip install -r requirements-build.txt
+      - name: Run all protocol, storage and Qt tests
+        env:
+          QT_QPA_PLATFORM: offscreen
+        run: python -m unittest discover -s tests -v
+      - name: Build branded icon
+        shell: pwsh
+        run: |
+          python -c "from PIL import Image,ImageOps; src=Image.open('assets/baison_logo.png').convert('RGBA');out=Image.new('RGBA',(256,256),'white');scaled=ImageOps.contain(src,(240,160),Image.Resampling.LANCZOS);out.alpha_composite(scaled,((256-scaled.width)//2,(256-scaled.height)//2));out.save('assets/baison.ico',format='ICO',sizes=[(16,16),(24,24),(32,32),(48,48),(64,64),(128,128),(256,256)])"
+          if ($LASTEXITCODE -ne 0) { throw 'Icon generation failed' }
+      - name: Package Windows EXE
+        shell: pwsh
+        run: |
+          python -m PyInstaller --noconfirm --clean --onefile --windowed --noupx --name BAISON_Service_Manager --icon assets/baison.ico --add-data "assets;assets" app.py
+          if ($LASTEXITCODE -ne 0) { throw 'Build failed' }
+          if (!(Test-Path dist/BAISON_Service_Manager.exe)) { throw 'Missing EXE' }
+      - name: SHA256
+        shell: pwsh
+        run: |
+          $hash=(Get-FileHash dist/BAISON_Service_Manager.exe -Algorithm SHA256).Hash.ToLowerInvariant()
+          "$hash  BAISON_Service_Manager.exe" | Set-Content -Encoding ascii dist/BAISON_Service_Manager.exe.sha256
+      - name: Upload downloadable artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: BAISON-Service-Manager-v4.0.0-Windows
+          path: |
+            dist/BAISON_Service_Manager.exe
+            dist/BAISON_Service_Manager.exe.sha256
+          if-no-files-found: error
+      - name: Publish fresh 4.0.0 release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: v4.0.0
+          target_commitish: main
+          name: BAISON Service Manager 4.0.0
+          prerelease: true
+          generate_release_notes: false
+          files: |
+            dist/BAISON_Service_Manager.exe
+            dist/BAISON_Service_Manager.exe.sha256
+          body: |
+            Clean BAISON Service Manager 4.0.0.
+            Removed unsupported RTC read, write and synchronization features, including DAT.
+            Maintenance Save is disabled until required fields are valid. Save errors preserve all data and keep the dialog open.
+            Local telemetry retention with independent preservation of maintenance and audit history.
+            Native RTL Qt/Cuba-inspired design, USB HID PI30 read and verified setting controls.
+            Open source; standalone EXE is not Authenticode code-signed. Custom EEPROM maintenance storage is not implemented.
