@@ -38,6 +38,7 @@ jobs:
           ./toolchain/bin/riscv64-unknown-elf-gcc -v
           make -j2 V=1 EXTRA_LDFLAGS="-Wl,--cref -nostartfiles -L${PWD}/toolchain/riscv64-unknown-elf/lib/rv32imfc/ilp32f -L${PWD}/toolchain/lib/gcc/riscv64-unknown-elf/10.2.0/rv32imfc/ilp32f"
           test -s out/lpt570.bin
+          python3 ../firmware/w70/patch_runtime_magic.py out/lpt570.bin
           file out/lpt570.bin
           chmod +x tools/IMG_Tools tools/lzma
           ./tools/IMG_Tools out/lpt570.bin ./out/lpt570-upgrade.bin ./tools/lzma "EPORT-PW41 Image" --version3
