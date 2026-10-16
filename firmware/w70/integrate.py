@@ -17,7 +17,7 @@ if "hfthread_create(uart_bridge," not in s:
 s=s.replace("hfgpio_configure_pin(0x3830015,0x20000000); // To power on Air780e onboard chip","/* SWB1 has no Air780e: do not energize unrelated GPIO. */")
 s=s.replace("hfdbg_set_level(1);","hfdbg_set_level(0);")
 s=s.replace("hfthread_create(uart_bridge, \"uart_bridge\", 256, NULL, HFTHREAD_PRIORITIES_LOW, NULL,NULL);",
-            "baison_serial_init();\n    mqtt_para_init();\n    baison_override_config();\n    mqtt_start();")
+            "baison_serial_init();\n    mqtt_para_init();\n    baison_override_config();\n    while(!hfnet_wifi_is_active()) msleep(50);\n    if(hfnet_start_httpd(HFTHREAD_PRIORITIES_MID) != HF_SUCCESS) u_printf(\"BAISON HTTPD FAILED\\r\\n\");\n    mqtt_start();\n    u_printf(\"BAISON_W70_OTA_V6_BOOT\\r\\n\");")
 s=s.replace("#include <hf_debug.h>","#include <hf_debug.h>\n#include \"mqtt.h\"\nextern void baison_serial_init(void);\nextern void baison_override_config(void);\nextern void mqtt_start(void);")
 source.write_text(s,encoding="utf-8")
 mk=root/"src/Makefile.mk"
