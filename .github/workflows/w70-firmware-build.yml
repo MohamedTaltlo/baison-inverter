@@ -1,4 +1,4 @@
-name: W70 Experimental Firmware Build
+name: BAISON W70 Experimental Firmware
 on:
   push:
     branches: [experiment/w70-custom-firmware]
@@ -20,11 +20,16 @@ jobs:
             python
             coreutils
             file
-      - name: Clone HiFlying BL602 vendor SDK
-        shell: msys2 {0}
+      - name: Clone HiFlying SDK
+        shell: pwsh
         run: |
           git clone --depth 1 https://github.com/freshev/BL602-UART-bridge.git sdk_upstream
-      - name: Build official HiFlying SDK example and OTA container
+          if ($LASTEXITCODE -ne 0) { throw 'Clone failed' }
+      - name: Integrate BAISON read-only firmware
+        shell: msys2 {0}
+        run: |
+          python3 firmware/w70/integrate.py
+      - name: Compile customized BL602 image and HiFlying OTA
         shell: msys2 {0}
         run: |
           cd sdk_upstream
@@ -34,9 +39,9 @@ jobs:
           ./tools/IMG_Tools.exe out/lpt570.bin ./out/lpt570-upgrade.bin ./tools/lzma.exe "HF-LPx70x1 Image" --version3
           python3 lpx70_upgrade.py ./out/lpt570-upgrade.bin
           ls -lah out/lpt570*.bin
-          cp out/lpt570-upgrade.bin ../W70_VENDOR_SDK_BASELINE_NOT_CUSTOM.bin
+          cp out/lpt570-upgrade.bin ../BAISON_W70_Experimental_HiFlying_OTA.bin
       - uses: actions/upload-artifact@v4
         with:
-          name: W70-Vendor-SDK-Baseline-NOT-CUSTOM
-          path: W70_VENDOR_SDK_BASELINE_NOT_CUSTOM.bin
+          name: BAISON-W70-Experimental-OTA-BIN
+          path: BAISON_W70_Experimental_HiFlying_OTA.bin
           if-no-files-found: error
