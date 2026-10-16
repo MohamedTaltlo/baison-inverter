@@ -36,7 +36,7 @@ jobs:
             fi
           done
           ./toolchain/bin/riscv64-unknown-elf-gcc -v
-          make -j2 V=1
+          make -j2 V=1 EXTRA_LDFLAGS="-Wl,--cref -nostartfiles -L${PWD}/toolchain/riscv64-unknown-elf/lib/rv32imfc/ilp32f -L${PWD}/toolchain/lib/gcc/riscv64-unknown-elf/10.2.0/rv32imfc/ilp32f"
           test -s out/lpt570.bin
           file out/lpt570.bin
           chmod +x tools/IMG_Tools tools/lzma
