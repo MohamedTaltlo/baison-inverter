@@ -26,7 +26,7 @@ m=m.replace("COMPONENT_SRCS := \t\t\tapp_main.c","COMPONENT_SRCS := app_main.c m
 if "baison_fw.c" not in m: raise SystemExit("Failed to patch Makefile")
 mk.write_text(m,encoding="utf-8")
 p=root/"src/mqtt.c"
-s=p.read_text(encoding="utf-8")
+s=p.read_text(encoding="latin-1")
 s=s.replace('#include "mqtt.h"','#include "mqtt.h"\nextern void baison_topics_init(const char*,char*,unsigned,char*,unsigned);\nextern void baison_receive(MessageData*);\nextern void baison_periodic(Client*);')
 s=s.replace("static void mqtt_start(void)","void mqtt_start(void)")
 start=s.find("static void topic_message_callback(MessageData* md)\n{")
@@ -62,5 +62,5 @@ void baison_override_config(void) {
     snprintf(g_mqtt_config.clientid,sizeof g_mqtt_config.clientid,"baison-%s",mac);
 }
 """
-p.write_text(s,encoding="utf-8")
+p.write_text(s,encoding="latin-1")
 print("SDK patch successful")
