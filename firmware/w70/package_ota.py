@@ -42,6 +42,8 @@ def main():
     if b"QPIGS" not in raw: sys.exit("Missing PI30 telemetry command.")
     if b"BAISON_W70_OTA_V6_BOOT" not in raw: sys.exit("Missing firmware boot marker.")
     if b"SW_UPLOAD" not in raw: sys.exit("Missing recovery HTTP firmware-update handler!")
+    if raw.count(MAGIC)!=1: sys.exit("Runtime OTA handler target ID differs from W70!")
+    if b"HF-LPx70x1 Image" in raw: sys.exit("Wrong LPX70 OTA ID remains embedded in runtime!")
     out=Path(sys.argv[2]);out.write_bytes(bytes(b))
     print("W70 public factory-image envelope verified:")
     print("magic",MAGIC.decode(), "flag0x24",b[0x24])
