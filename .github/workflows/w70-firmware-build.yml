@@ -27,8 +27,8 @@ jobs:
           set -euxo pipefail
           cd sdk_upstream
           export PROJECT_NAME=lpt570
-          export CPATH=/usr/lib/picolibc/riscv64-unknown-elf/include
-          export LIBRARY_PATH=/usr/lib/picolibc/riscv64-unknown-elf/lib
+          export CPATH="$PWD/toolchain/riscv64-unknown-elf/include"
+          export LIBRARY_PATH="$PWD/toolchain/riscv64-unknown-elf/lib/rv32imfc/ilp32f:$PWD/toolchain/lib/gcc/riscv64-unknown-elf/10.2.0/rv32imfc/ilp32f"
           for cmd in gcc ar as ld objcopy objdump nm ranlib readelf size strip; do
             target="/usr/bin/riscv64-unknown-elf-$cmd"
             if [ -x "$target" ]; then
