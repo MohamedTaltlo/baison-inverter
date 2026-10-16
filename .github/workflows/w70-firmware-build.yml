@@ -34,7 +34,11 @@ jobs:
         run: |
           cd sdk_upstream
           export PROJECT_NAME=lpt570
-          make -j2
+          ls -l ./toolchain/bin/riscv64-unknown-elf-gcc.exe
+          ./toolchain/bin/riscv64-unknown-elf-gcc.exe --version
+          printf 'int w70_test(void){return 42;}\n' > test_compiler.c
+          ./toolchain/bin/riscv64-unknown-elf-gcc.exe -c test_compiler.c -o test_compiler.o -march=rv32imafc -mabi=ilp32f
+          make -j1 V=1
           file out/lpt570.bin
           ./tools/IMG_Tools.exe out/lpt570.bin ./out/lpt570-upgrade.bin ./tools/lzma.exe "HF-LPx70x1 Image" --version3
           python3 lpx70_upgrade.py ./out/lpt570-upgrade.bin
