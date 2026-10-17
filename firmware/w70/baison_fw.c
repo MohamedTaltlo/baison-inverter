@@ -1,6 +1,6 @@
 /*
  * BAISON W70 V7 inverter bridge, BLE recovery and physically confirmed write commands.
- * Read-only PI30 bridge, development broker transport (1883, no TLS).
+ * PI30 with one-time BLE local authorization for settings; development broker 1883 no TLS.
  * NOT production security. Physical W70/OTA compatibility unverified.
  */
 #include <hsf.h>
@@ -18,6 +18,7 @@ static char topic_sub[96],topic_reply[96],topic_readings[96];
 static char queue_cmd[16], queue_id[48], queue_error[40];
 static int queued=0;
 static int serial_ready=0;
+static hfuart_handle_t serial_handle;
 static unsigned current_baud=2400;
 static unsigned consecutive_uart_failures=0;
 static uint32_t write_expires=0;
@@ -84,7 +85,6 @@ void baison_health_json(char *out,unsigned cap) {
         baison_mqtt_connected,serial_ready,current_baud,until(write_expires));
 }
 static uint32_t next_poll=0;
-static hfuart_handle_t serial_handle;
 static const char b64map[]="ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
 
 static int read_allowed(const char *s) {
