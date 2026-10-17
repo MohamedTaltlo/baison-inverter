@@ -22,7 +22,7 @@ if "hfthread_create(uart_bridge," not in s:
 s=s.replace("hfgpio_configure_pin(0x3830015,0x20000000); // To power on Air780e onboard chip","/* SWB1 has no Air780e: do not energize unrelated GPIO. */")
 s=s.replace("hfdbg_set_level(1);","hfdbg_set_level(0);")
 s=s.replace("hfthread_create(uart_bridge, \"uart_bridge\", 256, NULL, HFTHREAD_PRIORITIES_LOW, NULL,NULL);",
-            "baison_wifi_boot_config();\n    baison_serial_init();\n    baison_recovery_start();\n    mqtt_para_init();\n    baison_override_config();\n    mqtt_start();\n    u_printf(\"BAISON_W70_OTA_V20_BOOT\\r\\n\");")
+            "baison_wifi_boot_config();\n    baison_serial_init();\n    baison_recovery_start();\n    mqtt_para_init();\n    baison_override_config();\n    mqtt_start();\n    u_printf(\"BAISON_W70_OTA_V21_BOOT\\r\\n\");")
 s=s.replace("#include <hf_debug.h>", """#include <hf_debug.h>
 #include "mqtt.h"
 extern void baison_serial_init(void);
@@ -72,6 +72,10 @@ s=s.replace('MQTTConnectData.password.cstring = g_mqtt_config.password;',
 needle="ret = MQTTYield(&MQTTCli, 300);"
 if needle not in s: raise SystemExit("MQTTYield insertion point not found")
 s=s.replace(needle,needle+"\n            if(ret != FAILURE) baison_periodic(&MQTTCli);")
+# V21: give W70 HTTP/UI and STA association time to settle before MQTT connects.
+s=s.replace("HF_Debug(MQTT_DEBUG_LEVEL, \"connected.\\r\\n\");",
+            "msleep(12000);\\n        if(!hfwifi_sta_is_connected())continue;\\n        HF_Debug(MQTT_DEBUG_LEVEL, \"connected.\\r\\n\");")
+s=s.replace("msleep(3000);\\n\\t}", "msleep(8000);\\n\\t}")
 # This config is temporary, development-only and uses plaintext MQTT/1883.
 s+="""
 void baison_override_config(void) {
@@ -96,4 +100,4 @@ void baison_override_config(void) {
 }
 """
 p.write_text(s,encoding="latin-1")
-print("SDK V20 patch successful (BLE AT, HTTP OTA, PI30 commands)")
+print("SDK V21 patch successful (BLE AT, HTTP OTA, PI30 commands)")
