@@ -1,4 +1,4 @@
-/* BAISON W70 V8 on-device recovery: independent HTTP firmware uploader.
+/* BAISON W70 V9 on-device recovery: independent HTTP firmware uploader.
  * Safe by default: Web OTA locked until BLE AT+BAISONOTA=ON provides 6-digit PIN.
  * Same actual OTA flash API as HiFlying SDK, not a placeholder webpage.
  */
@@ -18,13 +18,13 @@ extern int baison_local_read(const char*,char*,unsigned);
 
 static const char recovery_page[] =
 "<!DOCTYPE html><html><head><meta charset='utf-8'><meta name='viewport' content='width=device-width,initial-scale=1'>"
-"<title>BAISON W70 V8 Firmware Recovery</title>"
+"<title>BAISON W70 V9 Firmware Recovery</title>"
 "<style>body{font:16px Arial;max-width:650px;margin:2em auto;padding:16px}label{display:block;margin:16px 0}"
 "button,input{padding:10px}button{background:#135cc7;color:white;border:0;border-radius:6px}"
 "pre{white-space:pre-wrap;background:#f0f0f0;padding:12px}</style></head><body>"
-"<h2>BAISON W70 V8 - Firmware Recovery</h2>"
+"<h2>BAISON W70 V9 - Firmware Recovery</h2>"
 "<p>Firmware image must be a verified W70 EPORT-PW41 OTA .bin.</p>"
-"<p>Local inverter test: <a href=/api/read?cmd=QPIGS>QPIGS</a> | <a href=/api/read?cmd=QPIRI>QPIRI</a> | <a href=/status>Status</a></p>"
+"<p>Tests: <a href=/ping>Ping</a> | <a href=/status>Status</a> | <a href=/api/read?cmd=QPIGS>QPIGS</a> | <a href=/api/read?cmd=QPIRI>QPIRI</a></p>"
 "<p>1. Connect by BLE FED4; send AT+BAISONOTA=ON (HEX 41 54 2B 42 41 49 53 4F 4E 4F 54 41 3D 4F 4E 0D).</p>"
 "<p>2. Use the six-digit response code within three minutes.</p>"
 "<label>OTA code <input type='text' id='pin' maxlength='6' inputmode='numeric'></label>"
@@ -123,8 +123,7 @@ static int upload(int fd,char *hdr,unsigned hdr_used,unsigned body_offset) {
     hfsys_reset();
     return 1;
 }
-static void connection(int fd) {
-    char hdr[HEADER_CAP+1],msg[800];
+static void connection_inner(int fd,char *hdr,char *msg) {
     int got;
     unsigned n=0,body_offset=0;
     struct timeval tm;
@@ -141,6 +140,10 @@ static void connection(int fd) {
         }
     }
     if(body_offset==0){reply(fd,400,"text/plain","Incomplete HTTP request");return;}
+    if(strncmp(hdr,"GET /ping ",10)==0) {
+        reply(fd,200,"text/plain","BAISON-W70-V9: HTTP alive");
+        return;
+    }
     if(strncmp(hdr,"GET /api/read?cmd=",18)==0) {
         char cmd[20];
         const char *p=hdr+18;
@@ -161,6 +164,18 @@ static void connection(int fd) {
     if(strncmp(hdr,"POST /api/firmware ",19)==0){upload(fd,hdr,n,body_offset);return;}
     reply(fd,404,"text/plain","Not Found; use /hide.html or /status");
 }
+static void connection(int fd) {
+    /* V8 kept a 1601-byte request buffer and an 800-byte response on a
+       4 KB FreeRTOS stack, then invoked nested PI30 and snprintf calls.
+       V9 allocates both from the heap, and the HTTP thread has an 8 KB stack. */
+    char *buffers=(char*)malloc(HEADER_CAP+1+800);
+    if(!buffers){
+        reply(fd,503,"text/plain","No RAM for HTTP request");
+        return;
+    }
+    connection_inner(fd,buffers,buffers+HEADER_CAP+1);
+    free(buffers);
+}
 volatile unsigned int baison_recovery_http_listening = 0;
 static void web_server(void *arg) {
     unsigned port=(unsigned)(uintptr_t)arg;
@@ -180,7 +195,7 @@ static void web_server(void *arg) {
         }
         if(listen(s,2)<0) {close(s);msleep(2000);continue;}
         baison_recovery_http_listening|=port==80?1u:2u;
-        u_printf("BAISON_V8_RECOVERY_HTTP_LISTEN %u\r\n",port);
+        u_printf("BAISON_V9_RECOVERY_HTTP_LISTEN %u\r\n",port);
         while(1) {
             struct sockaddr_in remote;
             socklen_t remotelen=sizeof remote;
@@ -195,7 +210,7 @@ static void web_server(void *arg) {
     }
 }
 void baison_recovery_start(void) {
-    int a=hfthread_create(web_server,"baison_recovery8080",1024,(void*)(uintptr_t)8080,HFTHREAD_PRIORITIES_LOW,NULL,NULL);
-    int b=hfthread_create(web_server,"baison_recovery80",1024,(void*)(uintptr_t)80,HFTHREAD_PRIORITIES_LOW,NULL,NULL);
-    u_printf("BAISON_V8_HTTP_TASKS %d %d\r\n",a,b);
+    int a=hfthread_create(web_server,"baison_recovery8080",2048,(void*)(uintptr_t)8080,HFTHREAD_PRIORITIES_LOW,NULL,NULL);
+    int b=hfthread_create(web_server,"baison_recovery80",2048,(void*)(uintptr_t)80,HFTHREAD_PRIORITIES_LOW,NULL,NULL);
+    u_printf("BAISON_V9_HTTP_TASKS %d %d\r\n",a,b);
 }
