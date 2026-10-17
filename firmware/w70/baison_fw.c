@@ -203,29 +203,93 @@ static void publish(Client *client,const char *topic,const char *text) {
     msg.payloadlen=strlen(text);
     MQTTPublish(client,topic,&msg);
 }
+
+/* Some inverter replies are delayed by a command: the old V10 reader
+ * consumed an already buffered response BEFORE the new command completed.
+ * Defer the new request until the UART has been quiet, discard stale RX,
+ * and use a conservative response-shape guard for QMOD, QID and QVFW. */
+static volatile uint32_t stale_uart_bytes=0;
+static volatile uint32_t rejected_uart_frames=0;
+static uint32_t uart_next_send=0;
+
+static int pi30_looks_like(const char*cmd,const unsigned char*b,unsigned n) {
+    unsigned i;
+    if(n<5 || b[0]!='(')return 0;
+    if(strcmp(cmd,"QMOD")==0) {
+        if(n!=5)return 0;
+        return strchr("PSLBFH",b[1])!=NULL;
+    }
+    if(strcmp(cmd,"QVFW")==0 || strcmp(cmd,"QVFW2")==0) {
+        if(n<8)return 0;
+        /* Versions typically begin (VERFW:; never accept QID digits here. */
+        return n>=9 && memcmp(b,"(VERFW:",7)==0;
+    }
+    if(strcmp(cmd,"QID")==0 || strcmp(cmd,"QSID")==0) {
+        if(n<8 || n>70)return 0;
+        for(i=1;i<n-3;i++){
+            unsigned char c=b[i];
+            if(!((c>='0'&&c<='9')||(c>='A'&&c<='Z')||(c>='a'&&c<='z')))return 0;
+        }
+        return 1;
+    }
+    return 1; /* Generic PI30 query: frame CRC is mandatory. */
+}
+static void uart_discard_stale(void) {
+    unsigned char trash[64];
+    uint32_t begin=hfsys_get_time(),last=begin;
+    while((uint32_t)(hfsys_get_time()-begin)<900u){
+        int got=hfuart_recv(serial_handle,(char*)trash,sizeof trash,30);
+        if(got>0) {
+            stale_uart_bytes+=(unsigned)got;
+            last=hfsys_get_time();
+        } else if((uint32_t)(hfsys_get_time()-last)>=220u)break;
+    }
+}
 static int inverter_query_inner(const char *cmd,unsigned char *out,unsigned cap,unsigned *outlen) {
-    unsigned char tx[32];unsigned n=(unsigned)strlen(cmd),total=0;
+    unsigned char tx[36];
+    unsigned n=(unsigned)strlen(cmd),total=0;
     uint16_t crc;
     uint32_t start;
+    unsigned discarded_frames=0;
+    if(outlen)*outlen=0;
     if(!serial_ready||n<2||n+3>sizeof tx||cap<5)return -1;
+    /* Serial commands never overlap, even between HTTP and MQTT tasks. */
+    {
+        uint32_t now=hfsys_get_time();
+        if((int32_t)(uart_next_send-now)>0)msleep(uart_next_send-now);
+    }
+    uart_discard_stale();
     memcpy(tx,cmd,n);crc=xmodem(tx,n);
     tx[n++]=escape_crc((unsigned char)(crc>>8));
     tx[n++]=escape_crc((unsigned char)crc);tx[n++]=0x0D;
-    if(hfuart_send(serial_handle,(char*)tx,n,500)!=(int)n)return -1;
+    if(hfuart_send(serial_handle,(char*)tx,n,800)!=(int)n)return -1;
+    uart_next_send=hfsys_get_time()+450u;
     start=hfsys_get_time();
-    while((uint32_t)(hfsys_get_time()-start)<PI30_WAIT_MS) {
-        unsigned char tmp[64];int got=hfuart_recv(serial_handle,(char*)tmp,sizeof tmp,120),i;
+    while((uint32_t)(hfsys_get_time()-start)<4200u) {
+        unsigned char tmp[64];
+        int got=hfuart_recv(serial_handle,(char*)tmp,sizeof tmp,110),i;
         for(i=0;i<got;i++){
             if(total==0 && tmp[i]!='(')continue;
             if(total>=cap){total=0;break;}
             out[total++]=tmp[i];
             if(tmp[i]==0x0D && total>=5) {
-                if(frame_crc_ok(out,total)){*outlen=total;return 0;}
+                if(frame_crc_ok(out,total)) {
+                    if(total==6 && memcmp(out,"(NAK",4)==0) {
+                        if(outlen)*outlen=total;
+                        return -2;
+                    }
+                    if(pi30_looks_like(cmd,out,total)){
+                        if(outlen)*outlen=total;
+                        return 0;
+                    }
+                    discarded_frames++;
+                    rejected_uart_frames++;
+                }
                 total=0;
             }
         }
     }
-    return -1;
+    return discarded_frames?-3:-1;
 }
 static int inverter_query(const char *cmd,unsigned char *out,unsigned cap,unsigned *outlen) {
     int res;
