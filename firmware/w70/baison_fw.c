@@ -15,7 +15,7 @@
 #define BAISON_POLL_INTERVAL_MS 30000u
 
 static char topic_sub[96],topic_reply[96],topic_readings[96];
-static char queue_cmd[16], queue_id[48], queue_error[40];
+static char queue_cmd[28], queue_id[48], queue_error[40];
 static int queued=0;
 static int serial_ready=0;
 static hfuart_handle_t serial_handle;
@@ -44,7 +44,7 @@ void baison_ota_finish(void) {
 int baison_at_ver(pat_session_t session,int argc,char *argv[],char *rsp,int len) {
     (void)session;(void)argv;
     if(argc) return -3;
-    snprintf(rsp,(size_t)len,"=BAISON-W70-V9,baud=%u,mqtt=%d,http=%u,ota=BLE+HTTP",current_baud,baison_mqtt_connected,baison_recovery_http_listening);
+    snprintf(rsp,(size_t)len,"=BAISON-W70-V10,baud=%u,mqtt=%d,http=%u,ota=BLE+HTTP",current_baud,baison_mqtt_connected,baison_recovery_http_listening);
     return 0;
 }
 int baison_at_ota(pat_session_t session,int argc,char *argv[],char *rsp,int len) {
@@ -83,17 +83,30 @@ int baison_at_uart(pat_session_t session,int argc,char *argv[],char *rsp,int len
     snprintf(rsp,(size_t)len,"=%u",current_baud);return 0;
 }
 void baison_health_json(char *out,unsigned cap) {
-    snprintf(out,cap,"{\"version\":\"BAISON-W70-V9\",\"ota\":\"ble+http\",\"mqtt\":%d,\"serial_ready\":%d,\"uart_baud\":%u,\"write_armed\":%d,\"commands\":\"QPIGS,QPIRI,QMOD,QVFW,QID,QFLAG,POP00,POP01,PBT01,PBT02,MUCHGC010,PGR00\"}",
+    snprintf(out,cap,"{\"version\":\"BAISON-W70-V10\",\"ota\":\"ble+http\",\"mqtt\":%d,\"serial_ready\":%d,\"uart_baud\":%u,\"write_armed\":%d,\"commands\":\"QPIGS,QPIRI,QMOD,QVFW,QID,QFLAG,POP00,POP01,PBT01,PBT02,MUCHGC010,PGR00\"}",
         baison_mqtt_connected,serial_ready,current_baud,until(write_expires));
 }
 static uint32_t next_poll=0;
 static const char b64map[]="ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
 
 static int read_allowed(const char *s) {
-    static const char *v[]={"QPIGS","QPIRI","QMOD","QVFW","QID","QFLAG"};
-    unsigned i;
-    for(i=0;i<sizeof(v)/sizeof(v[0]);i++) if(strcmp(v[i],s)==0) return 1;
-    return 0;
+    unsigned i,n;
+    if(!s)return 0;
+    n=(unsigned)strlen(s);
+    if(n<2 || n>24)return 0;
+    /* Safe generic PI30 inquiries; availability depends on inverter model. */
+    if(strcmp(s,"VERFW:")==0)return 1;
+    if(s[0]!='Q')return 0;
+    for(i=1;i<n;i++)
+        if(!((s[i]>='A'&&s[i]<='Z') || (s[i]>='0'&&s[i]<='9')))return 0;
+    return 1;
+}
+void baison_commands_json(char *out,unsigned cap) {
+    snprintf(out,cap,
+    "{\"v\":10,\"query_format\":\"Q + uppercase letters and digits, 2-24 chars\","
+    "\"queries\":\"QPI,QID,QSID,QVFW,QVFW2,QVFW3,QPIRI,QFLAG,QPIGS,QPIGS2,QMOD,QPIWS,QDI,QMCHGCR,QMUCHGCR,QOPPT,QCHPT,QT,QBEQI,QMN,QGMN,QET,QLT,QPGS0,QPGS1\","
+    "\"verified_writes\":\"POP00,POP01,PBT01,PBT02,MUCHGC010,PGR00\","
+    "\"note\":\"Query availability varies by inverter; settings commands are restricted\"}");
 }
 static int write_allowed(const char *s) {
     static const char *v[]={"POP00","POP01","PBT01","PBT02","MUCHGC010","PGR00"};
@@ -174,7 +187,7 @@ void baison_topics_init(const char *mac,char *sub,unsigned sub_cap,char *pub,uns
     snprintf(pub,pub_cap,"%s",topic_readings);
 }
 void baison_receive(MessageData *md) {
-    char cmd[16],id[48];
+    char cmd[28],id[48];
     if(!md||!md->message||!md->topicName)return;
     if(md->topicName->lenstring.len!=(int)strlen(topic_sub)||
        memcmp(md->topicName->lenstring.data,topic_sub,strlen(topic_sub))!=0)return;
@@ -255,7 +268,7 @@ int baison_local_read(const char *cmd,char*out,unsigned cap) {
 }
 void baison_periodic(Client *client) {
     unsigned char response[PI30_RX_MAX];unsigned response_len=0;
-    char encoded[520],packet[720],cmd[16],id[48];
+    char encoded[520],packet[720],cmd[28],id[48];
     int manual;
     uint32_t now;
     if(!client)return;
