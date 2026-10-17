@@ -155,6 +155,8 @@ static int id_safe(const char *id) {
 #define BAISON_SEQ_OFFSET 20
 #define BAISON_MAGIC_OFFSET 24
 static const unsigned char baison_key_magic[8]={'B','A','I','S','O','N','1','8'};
+/* RAM-only high-water mark for frequent signed READs (no flash wear). */
+static uint32_t baison_session_seq=0;
 static int baison_enrolled(void) {
     return memcmp(g_hf_config_file.reserved1+BAISON_MAGIC_OFFSET,baison_key_magic,8)==0;
 }
@@ -221,7 +223,7 @@ static int baison_authorized(const char *id,const char *cmd,const char *seqtxt,
         if(d>9 || value>(UINT32_MAX-d)/10)return 0;
         value=value*10+d;
     }
-    if(!value||value<=baison_last_seq())return 0;
+    if(!value||value<=baison_last_seq()||value<=baison_session_seq)return 0;
     printed=snprintf(canonical,sizeof(canonical),"BAISON|v2|%s|%s|%s|%s",
                      device_mac12,id,cmd,seqtxt);
     if(printed<=0||(unsigned)printed>=sizeof(canonical))return 0;
@@ -276,7 +278,10 @@ void baison_receive(MessageData *md) {
     if(get_json_string((const char*)md->message->payload,
          (unsigned)md->message->payloadlen,"auth",auth,sizeof(auth)))return;
     if(!baison_authorized(id,cmd,seqtxt,auth,&seq))return;
-    baison_advance_seq(seq);
+    baison_session_seq=seq;
+    /* Persist only state-changing requests before running UART write.
+       High-frequency signed reads must not wear out configuration flash. */
+    if(iswrite)baison_advance_seq(seq);
     strcpy(queue_cmd,cmd);strcpy(queue_id,id);
     queue_error[0]=0;queued_write=iswrite;queued=1;
 }
