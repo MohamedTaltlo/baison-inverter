@@ -25,40 +25,21 @@ static unsigned consecutive_uart_failures=0;
 static uint32_t write_expires=0;
 static uint32_t write_pin=0;
 static char last_write_id[48];
-static volatile uint32_t ota_pin=0;
-static volatile uint32_t ota_expires=0;
 extern volatile int baison_mqtt_connected;
 extern volatile unsigned int baison_recovery_http_listening;
 static int until(uint32_t expiry) {
     return expiry!=0 && (int32_t)(expiry-hfsys_get_time())>0;
 }
-int baison_check_ota_pin(const char *pin) {
-    char expected[8];
-    if(!until(ota_expires)||!ota_pin)return 0;
-    snprintf(expected,sizeof expected,"%06lu",(unsigned long)ota_pin);
-    return pin && strcmp(expected,pin)==0;
-}
-void baison_ota_finish(void) {
-    ota_pin=0;ota_expires=0;
-}
 int baison_at_ver(pat_session_t session,int argc,char *argv[],char *rsp,int len) {
     (void)session;(void)argv;
     if(argc) return -3;
-    snprintf(rsp,(size_t)len,"=BAISON-W70-V10,baud=%u,mqtt=%d,http=%u,ota=BLE+HTTP",current_baud,baison_mqtt_connected,baison_recovery_http_listening);
+    snprintf(rsp,(size_t)len,"=BAISON-W70-V10,baud=%u,mqtt=%d,http=%u,ota=LAN_NO_CODE",current_baud,baison_mqtt_connected,baison_recovery_http_listening);
     return 0;
 }
 int baison_at_ota(pat_session_t session,int argc,char *argv[],char *rsp,int len) {
-    (void)session;
-    if(argc==0) {
-        snprintf(rsp,(size_t)len,"=%s",until(ota_expires)?"ARMED":"OFF");
-        return 0;
-    }
-    if(argc!=1)return -3;
-    if(strcmp(argv[0],"OFF")==0){baison_ota_finish();snprintf(rsp,(size_t)len,"=OFF");return 0;}
-    if(strcmp(argv[0],"ON")!=0)return -4;
-    ota_pin=100000u+(hfsys_random()%900000u);
-    ota_expires=hfsys_get_time()+180000u;
-    snprintf(rsp,(size_t)len,"=%06lu,180sec",(unsigned long)ota_pin);
+    (void)session;(void)argv;
+    if(argc!=0)return -3;
+    snprintf(rsp,(size_t)len,"=OPEN_NO_CODE_HTTP");
     return 0;
 }
 int baison_at_write(pat_session_t session,int argc,char *argv[],char *rsp,int len) {
@@ -83,7 +64,7 @@ int baison_at_uart(pat_session_t session,int argc,char *argv[],char *rsp,int len
     snprintf(rsp,(size_t)len,"=%u",current_baud);return 0;
 }
 void baison_health_json(char *out,unsigned cap) {
-    snprintf(out,cap,"{\"version\":\"BAISON-W70-V10\",\"ota\":\"ble+http\",\"mqtt\":%d,\"serial_ready\":%d,\"uart_baud\":%u,\"write_armed\":%d,\"commands\":\"QPIGS,QPIRI,QMOD,QVFW,QID,QFLAG,POP00,POP01,PBT01,PBT02,MUCHGC010,PGR00\"}",
+    snprintf(out,cap,"{\"version\":\"BAISON-W70-V10\",\"ota\":\"lan-no-code\",\"mqtt\":%d,\"serial_ready\":%d,\"uart_baud\":%u,\"write_armed\":%d,\"commands\":\"QPIGS,QPIRI,QMOD,QVFW,QID,QFLAG,POP00,POP01,PBT01,PBT02,MUCHGC010,PGR00\"}",
         baison_mqtt_connected,serial_ready,current_baud,until(write_expires));
 }
 static uint32_t next_poll=0;
