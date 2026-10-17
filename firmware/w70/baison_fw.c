@@ -247,7 +247,8 @@ void baison_topics_init(const char *mac,char *sub,unsigned sub_cap,char *pub,uns
     char id[20];unsigned i,j=0;
     for(i=0;mac && mac[i] && i<32 && j<sizeof id-1;i++){
         char c=mac[i];
-        if((c>='a'&&c<='f')||(c>='A'&&c<='F')||(c>='0'&&c<='9'))id[j++]=c;
+        if(c>='a'&&c<='f')c=(char)(c-32);
+        if((c>='A'&&c<='F')||(c>='0'&&c<='9'))id[j++]=c;
     }
     if(j!=12){memcpy(id,"w70unassigned",13);j=13;}
     id[j]=0;
