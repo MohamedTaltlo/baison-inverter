@@ -50,5 +50,5 @@ jobs:
       - uses: actions/upload-artifact@v4
         with:
           name: BAISON-W70-V7-OTA-Experimental-Factory-Envelope
-          path: BAISON_W70_V6_Experimental_W70_OTA.bin
+          path: BAISON_W70_V7_OTA_EXPERIMENTAL.bin
           if-no-files-found: error
