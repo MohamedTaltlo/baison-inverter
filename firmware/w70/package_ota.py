@@ -40,9 +40,9 @@ def main():
     raw=verify(bytes(b))
     if b"mtradius.online" not in raw: sys.exit("Missing configured broker.")
     if b"QPIGS" not in raw: sys.exit("Missing PI30 telemetry command.")
-    if b"BAISON_W70_OTA_V7_BOOT" not in raw: sys.exit("Missing firmware boot marker.")
-    mandatory=[b"BAISON-W70-V7",b"BAISONOTA",b"BAISONVER",b"BAISONWRITE",
-               b"BAISONUART",b"/hide.html",b"/api/firmware",b"X-OTA-Code",b"QPIGS",b"QPIRI",b"QMOD",b"QFLAG",
+    if b"BAISON_W70_OTA_V8_BOOT" not in raw: sys.exit("Missing firmware boot marker.")
+    mandatory=[b"BAISON-W70-V8",b"BAISONOTA",b"BAISONVER",b"BAISONWRITE",
+               b"BAISONUART",b"BAISONDIAG",b"/hide.html",b"/api/firmware",b"X-OTA-Code",b"QPIGS",b"QPIRI",b"QMOD",b"QFLAG",
                b"POP00",b"POP01",b"PBT01",b"PBT02",b"MUCHGC010",b"PGR00"]
     missing=[x.decode("ascii") for x in mandatory if x not in raw]
     if missing: sys.exit("Missing critical V7 components: "+", ".join(missing))
