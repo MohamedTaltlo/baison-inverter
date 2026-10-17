@@ -47,7 +47,7 @@ def main():
                b"POP00",b"POP01",b"PBT01",b"PBT02",b"MUCHGC010",b"PGR00"]
     missing=[x.decode("ascii") for x in mandatory if x not in raw]
     if missing: sys.exit("Missing critical V7 components: "+", ".join(missing))
-    if raw.count(MAGIC)!=1: sys.exit("Runtime OTA handler target ID differs from W70!")
+    if raw.count(MAGIC)<2: sys.exit("Runtime OTA validator or HTTP recovery lacks W70 signature!")
     if b"HF-LPx70x1 Image" in raw: sys.exit("Wrong LPX70 OTA ID remains embedded in runtime!")
     out=Path(sys.argv[2]);out.write_bytes(bytes(b))
     print("W70 public factory-image envelope verified:")
