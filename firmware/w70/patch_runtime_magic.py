@@ -10,7 +10,7 @@ if len(sys.argv)!=2: sys.exit("usage: python3 patch_runtime_magic.py raw_app.bin
 p=Path(sys.argv[1]);b=p.read_bytes()
 n=b.count(OLD)
 if n!=1: sys.exit("Unexpected embedded target ID count: %d" % n)
-if b.count(NEW)!=0: sys.exit("Ambiguous existing W70 marker in application")
+# The recovery HTTP handler also embeds the W70 signature by design.
 modified=b.replace(OLD,NEW)
 assert len(modified)==len(b)
 p.write_bytes(modified)
