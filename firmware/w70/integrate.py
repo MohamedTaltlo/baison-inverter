@@ -9,6 +9,8 @@ root=Path("sdk_upstream")
 if not (root/"src/app_main.c").exists(): raise SystemExit("SDK checkout missing")
 shutil.copyfile("firmware/w70/baison_fw.c",root/"src/baison_fw.c")
 shutil.copyfile("firmware/w70/baison_recovery.c",root/"src/baison_recovery.c")
+shutil.copyfile("firmware/w70/baison_wifi.c",root/"src/baison_wifi.c")
+shutil.copyfile("firmware/w70/baison_ui.c",root/"src/baison_ui.c")
 shutil.copyfile(root/"example/mqtt/mqtt.c",root/"src/mqtt.c")
 shutil.copyfile(root/"example/mqtt/mqtt.h",root/"src/mqtt.h")
 source=root/"src/app_main.c"
@@ -18,10 +20,11 @@ if "hfthread_create(uart_bridge," not in s:
 s=s.replace("hfgpio_configure_pin(0x3830015,0x20000000); // To power on Air780e onboard chip","/* SWB1 has no Air780e: do not energize unrelated GPIO. */")
 s=s.replace("hfdbg_set_level(1);","hfdbg_set_level(0);")
 s=s.replace("hfthread_create(uart_bridge, \"uart_bridge\", 256, NULL, HFTHREAD_PRIORITIES_LOW, NULL,NULL);",
-            "baison_serial_init();\n    baison_recovery_start();\n    mqtt_para_init();\n    baison_override_config();\n    mqtt_start();\n    u_printf(\"BAISON_W70_OTA_V11_BOOT\\r\\n\");")
+            "baison_wifi_boot_config();\n    baison_serial_init();\n    baison_recovery_start();\n    mqtt_para_init();\n    baison_override_config();\n    mqtt_start();\n    u_printf(\"BAISON_W70_OTA_V12_BOOT\\r\\n\");")
 s=s.replace("#include <hf_debug.h>", """#include <hf_debug.h>
 #include "mqtt.h"
 extern void baison_serial_init(void);
+extern void baison_wifi_boot_config(void);
 extern void baison_override_config(void);
 extern void mqtt_start(void);
 extern void baison_recovery_start(void);
@@ -40,7 +43,7 @@ if s.count("BAISONOTA")!=1: raise SystemExit("Failed to integrate BAISON BLE AT 
 source.write_text(s,encoding="utf-8")
 mk=root/"src/Makefile.mk"
 m=mk.read_text(encoding="utf-8")
-m=m.replace("COMPONENT_SRCS := \t\t\tapp_main.c","COMPONENT_SRCS := app_main.c mqtt.c baison_fw.c baison_recovery.c")
+m=m.replace("COMPONENT_SRCS := \t\t\tapp_main.c","COMPONENT_SRCS := app_main.c mqtt.c baison_fw.c baison_recovery.c baison_wifi.c baison_ui.c")
 if "baison_fw.c" not in m: raise SystemExit("Failed to patch Makefile")
 mk.write_text(m,encoding="utf-8")
 p=root/"src/mqtt.c"
