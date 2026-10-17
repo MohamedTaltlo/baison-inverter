@@ -40,8 +40,13 @@ def main():
     raw=verify(bytes(b))
     if b"mtradius.online" not in raw: sys.exit("Missing configured broker.")
     if b"QPIGS" not in raw: sys.exit("Missing PI30 telemetry command.")
-    if b"BAISON_W70_OTA_V6_BOOT" not in raw: sys.exit("Missing firmware boot marker.")
-    if b"SW_UPLOAD" not in raw: sys.exit("Missing recovery HTTP firmware-update handler!")
+    if b"BAISON_W70_OTA_V7_BOOT" not in raw: sys.exit("Missing firmware boot marker.")
+    mandatory=[b"BAISON-W70-V7",b"BAISONOTA",b"BAISONVER",b"BAISONWRITE",
+               b"BAISONUART",b"/hide.html",b"/api/firmware",b"X-OTA-Code",
+               b"hfupdate_complete",b"QPIGS",b"QPIRI",b"QMOD",b"QFLAG",
+               b"POP00",b"POP01",b"PBT01",b"PBT02",b"MUCHGC010",b"PGR00"]
+    missing=[x.decode("ascii") for x in mandatory if x not in raw]
+    if missing: sys.exit("Missing critical V7 components: "+", ".join(missing))
     if raw.count(MAGIC)!=1: sys.exit("Runtime OTA handler target ID differs from W70!")
     if b"HF-LPx70x1 Image" in raw: sys.exit("Wrong LPX70 OTA ID remains embedded in runtime!")
     out=Path(sys.argv[2]);out.write_bytes(bytes(b))
@@ -49,7 +54,7 @@ def main():
     print("magic",MAGIC.decode(), "flag0x24",b[0x24])
     print("compressed",len(b)-256,"decompressed",len(raw))
     print("sha256",hashlib.sha256(bytes(b)).hexdigest())
-    print("SW_UPLOAD / BAISON / PI30 / MQTT broker embedded")
+    print("BLE OTA / HTTP OTA / PI30 read-write allowlist / MQTT broker embedded")
     print("This is still untested on physical SWB1 SolarV63.")
 
 if __name__=="__main__":main()
