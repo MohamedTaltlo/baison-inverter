@@ -39,12 +39,16 @@ jobs:
           make -j2 V=1 EXTRA_LDFLAGS="-Wl,--cref -nostartfiles -L${PWD}/toolchain/riscv64-unknown-elf/lib/rv32imfc/ilp32f -L${PWD}/toolchain/lib/gcc/riscv64-unknown-elf/10.2.0/rv32imfc/ilp32f"
           test -s out/lpt570.bin
           python3 ../firmware/w70/patch_runtime_magic.py out/lpt570.bin
+          ./toolchain/bin/riscv64-unknown-elf-nm out/lpt570.elf | grep -E "baison_recovery_start|baison_at_ota|baison_local_read|baison_receive|baison_at_write|hfupdate_complete"
+          ./toolchain/bin/riscv64-unknown-elf-nm out/lpt570.elf | grep -q "hfupdate_complete"
+          ./toolchain/bin/riscv64-unknown-elf-nm out/lpt570.elf | grep -q "baison_recovery_start"
+          ./toolchain/bin/riscv64-unknown-elf-nm out/lpt570.elf | grep -q "baison_local_read"
           file out/lpt570.bin
           chmod +x tools/IMG_Tools tools/lzma
           ./tools/IMG_Tools out/lpt570.bin ./out/lpt570-upgrade.bin ./tools/lzma "EPORT-PW41 Image" --version3
-          python3 ../firmware/w70/package_ota.py out/lpt570-upgrade.bin ../BAISON_W70_V6_Experimental_W70_OTA.bin
+          python3 ../firmware/w70/package_ota.py out/lpt570-upgrade.bin ../BAISON_W70_V7_OTA_EXPERIMENTAL.bin
       - uses: actions/upload-artifact@v4
         with:
-          name: BAISON-W70-V6-Experimental-Factory-Envelope
+          name: BAISON-W70-V7-OTA-Experimental-Factory-Envelope
           path: BAISON_W70_V6_Experimental_W70_OTA.bin
           if-no-files-found: error
