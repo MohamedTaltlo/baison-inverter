@@ -26,6 +26,7 @@ static unsigned current_baud=2400;
 static unsigned consecutive_uart_failures=0;
 extern volatile int baison_mqtt_connected;
 extern volatile unsigned int baison_recovery_http_listening;
+static int baison_enrolled(void);
 int baison_at_ver(pat_session_t session,int argc,char *argv[],char *rsp,int len) {
     (void)session;(void)argv;
     if(argc) return -3;
@@ -55,9 +56,10 @@ int baison_at_uart(pat_session_t session,int argc,char *argv[],char *rsp,int len
     snprintf(rsp,(size_t)len,"=%u",current_baud);return 0;
 }
 void baison_health_json(char *out,unsigned cap) {
-    snprintf(out,cap,"{\"version\":\"BAISON-W70-V18\",\"ota\":\"lan-no-code\",\"mqtt\":%d,\"serial_ready\":%d,\"uart_baud\":%u,\"write_armed\":%d,\"commands\":\"QPIGS,QPIRI,QMOD,QVFW,QID,QFLAG,POP00,POP01,PBT01,PBT02,MUCHGC010,PGR00\"}",
-        baison_mqtt_connected,serial_ready,current_baud,0);
+    snprintf(out,cap,"{\"version\":\"BAISON-W70-V18\",\"ota\":\"lan-no-code\",\"mqtt\":%d,\"remote_ready\":%s,\"protocol\":2,\"serial_ready\":%d,\"uart_baud\":%u,\"commands\":\"QPIGS,QPIRI,QMOD,QVFW,QID,QSID,QFLAG,POP00,POP01,PBT01,PBT02,MUCHGC010,PGR00,PF\"}",
+        baison_mqtt_connected,baison_enrolled()?"true":"false",serial_ready,current_baud);
 }
+
 static uint32_t next_poll=0;
 static const char b64map[]="ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
 
@@ -75,12 +77,12 @@ static int read_allowed(const char *s) {
 }
 void baison_commands_json(char *out,unsigned cap) {
     snprintf(out,cap,
-    "{\"v\":13,\"query_format\":\"Q + uppercase letters and digits, 2-24 chars\","
+    "{\"v\":18,\"query_format\":\"Q + uppercase letters and digits, 2-24 chars\","
     "\"queries\":\"QPI,QID,QSID,QVFW,QVFW2,QVFW3,QPIRI,QFLAG,QPIGS,QPIGS2,QMOD,QPIWS,QDI,QMCHGCR,QMUCHGCR,QOPPT,QCHPT,QT,QBEQI,QMN,QGMN,QET,QLT,QPGS0,QPGS1\","
-    "\"verified_writes\":\"POP00,POP01,PBT01,PBT02,MUCHGC010,PGR00\","
+    "\"verified_writes\":\"POP00,POP01,PBT01,PBT02,MUCHGC010,PGR00,PF\","
     "\"settings\":\"POP,PCP,PGR,PBT,PBCV,PBDV,PSDV,PCVV,PBFT,MNCHGC,MUCHGC,F,V,PSPB,PPVOKC\","
     "\"flags\":\"a,b,k,u,v,x,y,z via PE/PD\","
-    "\"requires\":\"BLE one-use local authorization and inverter ACK plus readback\","
+    "\"requires\":\"MQTT v2 per-device HMAC-SHA1 and monotonic sequence; ACK plus readback\","
     "\"note\":\"Query availability varies by inverter; settings commands are restricted\"}");
 }
 extern int baison_setting_rule(const char*,const char**,int*);
