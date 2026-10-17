@@ -1,4 +1,4 @@
-/* BAISON W70 V10 on-device recovery: independent HTTP firmware uploader.
+/* BAISON W70 V11 on-device recovery: independent HTTP firmware uploader.
  * LAN OTA with no passwords/codes by owner's explicit request.
  * DO NOT expose port 80/8080 to the public internet or guest WiFi.
  * Uses real HiFlying hfupdate_* OTA flash staging.
@@ -12,17 +12,18 @@
 
 #define MAX_UPLOAD (940000u)
 #define HEADER_CAP 1600
+#define RESPONSE_CAP 1300
 extern void baison_health_json(char*,unsigned);
 extern int baison_local_read(const char*,char*,unsigned);
 extern void baison_commands_json(char*,unsigned);
 
 static const char recovery_page[] =
 "<!DOCTYPE html><html><head><meta charset='utf-8'><meta name='viewport' content='width=device-width,initial-scale=1'>"
-"<title>BAISON W70 V10 Firmware Recovery</title>"
+"<title>BAISON W70 V11 Firmware Recovery</title>"
 "<style>body{font:16px Arial;max-width:650px;margin:2em auto;padding:16px}label{display:block;margin:16px 0}"
 "button,input{padding:10px}button{background:#135cc7;color:white;border:0;border-radius:6px}"
 "pre{white-space:pre-wrap;background:#f0f0f0;padding:12px}</style></head><body>"
-"<h2>BAISON W70 V10 - Firmware Recovery</h2>"
+"<h2>BAISON W70 V11 - Firmware Recovery</h2>"
 "<p>Firmware image must be a verified W70 EPORT-PW41 OTA .bin.</p>"
 "<p>Tests: <a href=/ping>Ping</a> | <a href=/status>Status</a> | <a href=/api/read?cmd=QPIGS>QPIGS</a> | <a href=/api/read?cmd=QPIRI>QPIRI</a></p>"
 "<p><b>OTA requires no codes.</b> Keep this device isolated on your own LAN.</p>"
@@ -151,11 +152,11 @@ static void connection_inner(int fd,char *hdr,char *msg) {
     }
     if(body_offset==0){reply(fd,400,"text/plain","Incomplete HTTP request");return;}
     if(strncmp(hdr,"GET /ping ",10)==0) {
-        reply(fd,200,"text/plain","BAISON-W70-V10: HTTP alive");
+        reply(fd,200,"text/plain","BAISON-W70-V11: HTTP alive");
         return;
     }
     if(strncmp(hdr,"GET /api/commands ",18)==0) {
-        baison_commands_json(msg,800);
+        baison_commands_json(msg,RESPONSE_CAP);
         reply(fd,200,"application/json",msg);
         return;
     }
@@ -165,7 +166,7 @@ static void connection_inner(int fd,char *hdr,char *msg) {
         unsigned k=0;
         while(p[k] && p[k]!=' ' && p[k]!='&' && k<sizeof cmd-1){cmd[k]=p[k];k++;}
         cmd[k]=0;
-        if(baison_local_read(cmd,msg,800u)!=0) reply(fd,400,"text/plain","Unsupported read command");
+        if(baison_local_read(cmd,msg,RESPONSE_CAP)!=0) reply(fd,400,"text/plain","Unsupported read command");
         else reply(fd,200,"application/json",msg);
         return;
     }
@@ -183,7 +184,7 @@ static void connection(int fd) {
     /* V8 kept a 1601-byte request buffer and an 800-byte response on a
        4 KB FreeRTOS stack, then invoked nested PI30 and snprintf calls.
        V10 uses bounded buffers and explicit 800-byte capacities. */
-    char *buffers=(char*)malloc(HEADER_CAP+1+800);
+    char *buffers=(char*)malloc(HEADER_CAP+1+RESPONSE_CAP);
     if(!buffers){
         reply(fd,503,"text/plain","No RAM for HTTP request");
         return;
@@ -210,7 +211,7 @@ static void web_server(void *arg) {
         }
         if(listen(s,2)<0) {close(s);msleep(2000);continue;}
         baison_recovery_http_listening|=port==80?1u:2u;
-        u_printf("BAISON_V10_RECOVERY_HTTP_LISTEN %u\r\n",port);
+        u_printf("BAISON_V11_RECOVERY_HTTP_LISTEN %u\r\n",port);
         while(1) {
             struct sockaddr_in remote;
             socklen_t remotelen=sizeof remote;
@@ -227,5 +228,5 @@ static void web_server(void *arg) {
 void baison_recovery_start(void) {
     int a=hfthread_create(web_server,"baison_recovery8080",2048,(void*)(uintptr_t)8080,HFTHREAD_PRIORITIES_LOW,NULL,NULL);
     int b=hfthread_create(web_server,"baison_recovery80",2048,(void*)(uintptr_t)80,HFTHREAD_PRIORITIES_LOW,NULL,NULL);
-    u_printf("BAISON_V10_HTTP_TASKS %d %d\r\n",a,b);
+    u_printf("BAISON_V11_HTTP_TASKS %d %d\r\n",a,b);
 }
