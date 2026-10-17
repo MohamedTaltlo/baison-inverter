@@ -310,6 +310,60 @@ static void pi30_printable(const unsigned char *raw,unsigned n,char *dest,unsign
     }
     dest[p]=0;
 }
+/* Changes are restricted to the same documented settings vocabulary as
+ * github.com/MohamedTaltlo/baison-inverter/settings.py. This local API is
+ * physically armed via BLE, requires explicit request confirmation, then
+ * validates the inverter ACK and performs a fresh readback.
+ */
+int baison_local_write(const char *cmd,const char *pin,const char *confirm,char*out,unsigned cap) {
+    unsigned char response[PI30_RX_MAX];
+    unsigned n=0;
+    char expected[8],decoded[PI30_RX_MAX],readback[PI30_RX_MAX];
+    const char *query=NULL;
+    int index=-1,rc,after;
+    if(!cmd || !baison_setting_rule(cmd,&query,&index))return -2;
+    if(!confirm || strcmp(confirm,"YES")!=0)return -3;
+    if(!until(write_expires)||!write_pin || !pin)return -4;
+    snprintf(expected,sizeof expected,"%06lu",(unsigned long)write_pin);
+    if(strcmp(pin,expected)!=0)return -4;
+    /* Token is single-use even if the inverter times out or returns NAK. */
+    write_expires=0;write_pin=0;
+    rc=inverter_query(cmd,response,sizeof response,&n);
+    if(rc!=0) {
+        snprintf(out,cap,"{\"cmd\":\"%s\",\"ok\":false,\"error\":\"%s\"}",
+             cmd,rc==-2?"inverter_nak":"write_no_ack");
+        return 0;
+    }
+    pi30_printable(response,n,decoded,sizeof decoded);
+    if(strcmp(decoded,"ACK")!=0) {
+        snprintf(out,cap,"{\"cmd\":\"%s\",\"ok\":false,\"error\":\"unexpected_write_response\"}",cmd);
+        return 0;
+    }
+    msleep(250);
+    if(query==NULL || !read_allowed(query))return -5;
+    after=inverter_query(query,response,sizeof response,&n);
+    if(after!=0) {
+        snprintf(out,cap,"{\"cmd\":\"%s\",\"ok\":false,\"ack\":true,\"verified\":false,\"error\":\"readback_failed\"}",cmd);
+        return 0;
+    }
+    pi30_printable(response,n,readback,sizeof readback);
+    /* The full readback is exposed for UI verification. V12 deliberately
+       does not claim the requested setting was applied solely from ACK. */
+    {
+        unsigned p=0,i;
+        char compact[580];
+        for(i=0;readback[i] && p+3<sizeof compact;i++) {
+            unsigned char c=(unsigned char)readback[i];
+            if(c=='"'||c=='\\')compact[p++]='\\';
+            compact[p++]=(char)c;
+        }
+        compact[p]=0;
+        snprintf(out,cap,
+           "{\"cmd\":\"%s\",\"ok\":true,\"ack\":true,\"verified\":false,\"readback_command\":\"%s\",\"readback_index\":%d,\"readback\":\"%s\",\"note\":\"ACK accepted; compare the indexed value to confirm change\"}",
+           cmd,query,index,compact);
+    }
+    return 0;
+}
 int baison_local_read(const char *cmd,char*out,unsigned cap) {
     unsigned char response[PI30_RX_MAX];
     unsigned n=0;
