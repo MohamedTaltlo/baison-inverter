@@ -1,5 +1,5 @@
 /*
- * BAISON W70 first-boot experimental application on HiFlying LPX70 SDK.
+ * BAISON W70 V7 inverter bridge, BLE recovery and physically confirmed write commands.
  * Read-only PI30 bridge, development broker transport (1883, no TLS).
  * NOT production security. Physical W70/OTA compatibility unverified.
  */
@@ -15,17 +15,88 @@
 #define BAISON_POLL_INTERVAL_MS 30000u
 
 static char topic_sub[96],topic_reply[96],topic_readings[96];
-static char queue_cmd[16], queue_id[48];
+static char queue_cmd[16], queue_id[48], queue_error[40];
 static int queued=0;
 static int serial_ready=0;
+static unsigned current_baud=2400;
+static unsigned consecutive_uart_failures=0;
+static uint32_t write_expires=0;
+static uint32_t write_pin=0;
+static char last_write_id[48];
+static volatile uint32_t ota_pin=0;
+static volatile uint32_t ota_expires=0;
+extern volatile int baison_mqtt_connected;
+static int until(uint32_t expiry) {
+    return expiry!=0 && (int32_t)(expiry-hfsys_get_time())>0;
+}
+int baison_check_ota_pin(const char *pin) {
+    char expected[8];
+    if(!until(ota_expires)||!ota_pin)return 0;
+    snprintf(expected,sizeof expected,"%06lu",(unsigned long)ota_pin);
+    return pin && strcmp(expected,pin)==0;
+}
+void baison_ota_finish(void) {
+    ota_pin=0;ota_expires=0;
+}
+int baison_at_ver(pat_session_t session,int argc,char *argv[],char *rsp,int len) {
+    (void)session;(void)argv;
+    if(argc) return -3;
+    snprintf(rsp,(size_t)len,"=BAISON-W70-V7,baud=%u,mqtt=%d,ota=BLE+HTTP",current_baud,baison_mqtt_connected);
+    return 0;
+}
+int baison_at_ota(pat_session_t session,int argc,char *argv[],char *rsp,int len) {
+    (void)session;
+    if(argc==0) {
+        snprintf(rsp,(size_t)len,"=%s",until(ota_expires)?"ARMED":"OFF");
+        return 0;
+    }
+    if(argc!=1)return -3;
+    if(strcmp(argv[0],"OFF")==0){baison_ota_finish();snprintf(rsp,(size_t)len,"=OFF");return 0;}
+    if(strcmp(argv[0],"ON")!=0)return -4;
+    ota_pin=100000u+(hfsys_random()%900000u);
+    ota_expires=hfsys_get_time()+180000u;
+    snprintf(rsp,(size_t)len,"=%06lu,180sec",(unsigned long)ota_pin);
+    return 0;
+}
+int baison_at_write(pat_session_t session,int argc,char *argv[],char *rsp,int len) {
+    (void)session;
+    if(argc==0) {snprintf(rsp,(size_t)len,"=%s",until(write_expires)?"ARMED":"OFF");return 0;}
+    if(argc!=1)return -3;
+    if(strcmp(argv[0],"OFF")==0){write_pin=0;write_expires=0;snprintf(rsp,(size_t)len,"=OFF");return 0;}
+    if(strcmp(argv[0],"ON")!=0)return -4;
+    write_pin=100000u+(hfsys_random()%900000u);
+    write_expires=hfsys_get_time()+120000u;
+    snprintf(rsp,(size_t)len,"=%06lu,120sec",(unsigned long)write_pin);
+    return 0;
+}
+int baison_at_uart(pat_session_t session,int argc,char *argv[],char *rsp,int len) {
+    (void)session;
+    if(argc==0){snprintf(rsp,(size_t)len,"=%u",current_baud);return 0;}
+    if(argc!=1)return -3;
+    if(strcmp(argv[0],"2400")!=0 && strcmp(argv[0],"9600")!=0)return -4;
+    if(!serial_ready)return -5;
+    if(hfuart_config(serial_handle,(int)atoi(argv[0]),COMPARITY_NONE,COMBITS_8,COMSTOPBITS_1,COMUARTNFC)!=HF_SUCCESS)return -5;
+    current_baud=(unsigned)atoi(argv[0]);consecutive_uart_failures=0;
+    snprintf(rsp,(size_t)len,"=%u",current_baud);return 0;
+}
+void baison_health_json(char *out,unsigned cap) {
+    snprintf(out,cap,"{\"version\":\"BAISON-W70-V7\",\"ota\":\"ble+http\",\"mqtt\":%d,\"serial_ready\":%d,\"uart_baud\":%u,\"write_armed\":%d,\"commands\":\"QPIGS,QPIRI,QMOD,QVFW,QID,QFLAG,POP00,POP01,PBT01,PBT02,MUCHGC010,PGR00\"}",
+        baison_mqtt_connected,serial_ready,current_baud,until(write_expires));
+}
 static uint32_t next_poll=0;
 static hfuart_handle_t serial_handle;
 static const char b64map[]="ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
 
-static int command_allowed(const char *s) {
+static int read_allowed(const char *s) {
     static const char *v[]={"QPIGS","QPIRI","QMOD","QVFW","QID","QFLAG"};
     unsigned i;
     for(i=0;i<sizeof(v)/sizeof(v[0]);i++) if(strcmp(v[i],s)==0) return 1;
+    return 0;
+}
+static int write_allowed(const char *s) {
+    static const char *v[]={"POP00","POP01","PBT01","PBT02","MUCHGC010","PGR00"};
+    unsigned i;
+    for(i=0;i<sizeof(v)/sizeof(v[0]);i++)if(strcmp(v[i],s)==0)return 1;
     return 0;
 }
 static uint16_t xmodem(const unsigned char *b,unsigned n) {
@@ -108,7 +179,24 @@ void baison_receive(MessageData *md) {
     if(md->message->payloadlen<=0||md->message->payloadlen>240)return;
     if(get_json_string((const char*)md->message->payload,(unsigned)md->message->payloadlen,"cmd",cmd,sizeof cmd))return;
     if(get_json_string((const char*)md->message->payload,(unsigned)md->message->payloadlen,"id",id,sizeof id))return;
-    if(!command_allowed(cmd)||!id_safe(id)||queued)return;
+    if(!id_safe(id)||queued)return;
+    queue_error[0]=0;
+    if(!read_allowed(cmd) && !write_allowed(cmd)) {
+        strcpy(queue_error,"unsupported_command");
+    } else if(write_allowed(cmd)) {
+        char pin[16],expected[8];
+        if(!until(write_expires) || !write_pin) strcpy(queue_error,"physical_confirmation_required");
+        else if(get_json_string((const char*)md->message->payload,(unsigned)md->message->payloadlen,"pin",pin,sizeof pin)) strcpy(queue_error,"missing_confirmation");
+        else {
+            snprintf(expected,sizeof expected,"%06lu",(unsigned long)write_pin);
+            if(strcmp(pin,expected)!=0)strcpy(queue_error,"wrong_confirmation");
+            else if(strcmp(id,last_write_id)==0)strcpy(queue_error,"repeated_write_request");
+            else {
+                strcpy(last_write_id,id);
+                write_expires=0;write_pin=0; /* one-use authorization */
+            }
+        }
+    }
     strcpy(queue_cmd,cmd);strcpy(queue_id,id);queued=1;
 }
 static void publish(Client *client,const char *topic,const char *text) {
@@ -158,18 +246,29 @@ void baison_periodic(Client *client) {
         strcpy(cmd,"QPIGS");strcpy(id,"poll");
     }
     next_poll=now+BAISON_POLL_INTERVAL_MS;
-    if(inverter_query(cmd,response,sizeof response,&response_len)!=0 ||
+    if(queue_error[0]) {
+       snprintf(packet,sizeof packet,"{\"v\":1,\"id\":\"%s\",\"cmd\":\"%s\",\"ok\":false,\"error\":\"%s\"}",id,cmd,queue_error);
+       queue_error[0]=0;
+    } else if(inverter_query(cmd,response,sizeof response,&response_len)!=0 ||
        encode64(response,response_len,encoded,sizeof encoded)<0){
        snprintf(packet,sizeof packet,"{\"v\":1,\"id\":\"%s\",\"cmd\":\"%s\",\"ok\":false,\"error\":\"inverter_timeout\"}",id,cmd);
     } else {
        snprintf(packet,sizeof packet,"{\"v\":1,\"id\":\"%s\",\"cmd\":\"%s\",\"ok\":true,\"co\":\"%s\"}",id,cmd,encoded);
     }
+    if(strstr(packet,"\"inverter_timeout\"")!=NULL && !manual) {
+        consecutive_uart_failures++;
+        if(consecutive_uart_failures>=3 && serial_ready) {
+            unsigned next=current_baud==2400?9600:2400;
+            if(hfuart_config(serial_handle,(int)next,COMPARITY_NONE,COMBITS_8,COMSTOPBITS_1,COMUARTNFC)==HF_SUCCESS) current_baud=next;
+            consecutive_uart_failures=0;
+        }
+    } else if(strstr(packet,"\"ok\":true")!=NULL) consecutive_uart_failures=0;
     publish(client,manual?topic_reply:topic_readings,packet);
 }
 void baison_serial_init(void) {
     serial_handle=hfuart_open(0);
     if(serial_handle) {
         /* Voltronic 2400 baud is a first-test assumption, not confirmed for BAISON W70. */
-        serial_ready=(hfuart_config(serial_handle,2400,COMPARITY_NONE,COMBITS_8,COMSTOPBITS_1,COMUARTNFC)==0);
+        serial_ready=(hfuart_config(serial_handle,(int)current_baud,COMPARITY_NONE,COMBITS_8,COMSTOPBITS_1,COMUARTNFC)==HF_SUCCESS);
     }
 }
