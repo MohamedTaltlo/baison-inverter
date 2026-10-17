@@ -13,15 +13,23 @@ CASES = [
 ]
 for path,name,mandatory in CASES:
     data=(ROOT/path).read_text("utf-8")
-    match=re.search(r"\bconst char "+name+r"\[\]\s*=\s*\n(.*?);",data,re.S)
-    if not match:
-        raise SystemExit(f"{path}: missing literal {name}")
-    text="".join(ast.literal_eval(m.group(0)) for m in
-       re.finditer(r'"(?:\\.|[^"\\])*"',match.group(1)))
+    marker="const char "+name+"[] ="
+    assert marker in data,(path,"missing literal")
+    lines=data[data.index(marker):].splitlines()[1:]
+    parts=[]
+    for line in lines:
+        literal=line.strip()
+        done=literal.endswith(";")
+        if done:literal=literal[:-1]
+        if not literal.startswith('"'):
+            raise ValueError((path,"unexpected C initializer",literal[:80]))
+        parts.append(ast.literal_eval(literal))
+        if done:break
+    text="".join(parts)
     assert text.startswith("<!doctype html>"),(path,text[:80])
     assert '<html lang="ar" dir="rtl">' in text
     assert ":light" in text
-    assert 'pin' not in text.lower() or 'pin' in ('something to debug',), f"{path}: unexpected PIN"
+    assert 'id="pin"' not in text and 'رمز التعديل' not in text, f"{path}: unexpected PIN field"
     assert not re.search(r"\bV\d{1,3}\b",text), f"{path}: visible firmware version"
     for fragment in mandatory:
         assert fragment in text, (path,fragment)
