@@ -1,6 +1,7 @@
-/* BAISON W70 V9 on-device recovery: independent HTTP firmware uploader.
- * Safe by default: Web OTA locked until BLE AT+BAISONOTA=ON provides 6-digit PIN.
- * Same actual OTA flash API as HiFlying SDK, not a placeholder webpage.
+/* BAISON W70 V10 on-device recovery: independent HTTP firmware uploader.
+ * LAN OTA with no passwords/codes by owner's explicit request.
+ * DO NOT expose port 80/8080 to the public internet or guest WiFi.
+ * Uses real HiFlying hfupdate_* OTA flash staging.
  */
 #include <hsf.h>
 #include <stdint.h>
@@ -11,41 +12,59 @@
 
 #define MAX_UPLOAD (940000u)
 #define HEADER_CAP 1600
-extern int baison_check_ota_pin(const char*);
-extern void baison_ota_finish(void);
 extern void baison_health_json(char*,unsigned);
 extern int baison_local_read(const char*,char*,unsigned);
+extern int baison_local_write(const char*,const char*,char*,unsigned);
+extern void baison_commands_json(char*,unsigned);
 
 static const char recovery_page[] =
 "<!DOCTYPE html><html><head><meta charset='utf-8'><meta name='viewport' content='width=device-width,initial-scale=1'>"
-"<title>BAISON W70 V9 Firmware Recovery</title>"
+"<title>BAISON W70 V10 Firmware Recovery</title>"
 "<style>body{font:16px Arial;max-width:650px;margin:2em auto;padding:16px}label{display:block;margin:16px 0}"
 "button,input{padding:10px}button{background:#135cc7;color:white;border:0;border-radius:6px}"
 "pre{white-space:pre-wrap;background:#f0f0f0;padding:12px}</style></head><body>"
-"<h2>BAISON W70 V9 - Firmware Recovery</h2>"
+"<h2>BAISON W70 V10 - Firmware Recovery</h2>"
 "<p>Firmware image must be a verified W70 EPORT-PW41 OTA .bin.</p>"
 "<p>Tests: <a href=/ping>Ping</a> | <a href=/status>Status</a> | <a href=/api/read?cmd=QPIGS>QPIGS</a> | <a href=/api/read?cmd=QPIRI>QPIRI</a></p>"
-"<p>1. Connect by BLE FED4; send AT+BAISONOTA=ON (HEX 41 54 2B 42 41 49 53 4F 4E 4F 54 41 3D 4F 4E 0D).</p>"
-"<p>2. Use the six-digit response code within three minutes.</p>"
-"<label>OTA code <input type='text' id='pin' maxlength='6' inputmode='numeric'></label>"
+"<p><b>OTA requires no codes.</b> Keep this device isolated on your own LAN.</p>"
+"<p><a href='/api/commands'>Supported protocol commands</a></p>"
 "<label>W70 OTA .bin <input type='file' id='file' accept='.bin'></label>"
 "<button onclick='update()'>Upload and verify firmware</button>"
 "<pre id='output'>No upload started.</pre>"
 "<p>HTTP is local-only and has no TLS. Do not expose this port to the Internet.</p>"
 "<script>"
-"async function update(){let p=document.getElementById('pin').value;"
-"let f=document.getElementById('file').files[0];let o=document.getElementById('output');"
-"if(!/^\\d{6}$/.test(p)||!f){o.textContent='Need OTA code and .bin';return;}"
-"o.textContent='Uploading...';try{let r=await fetch('/api/firmware',{method:'POST',headers:{'X-OTA-Code':p,'Content-Type':'application/octet-stream'},body:f});"
+"async function update(){let f=document.getElementById('file').files[0];let o=document.getElementById('output');"
+"if(!f){o.textContent='Choose a W70 .bin';return;}"
+"if(!confirm('Apply this firmware update to W70?'))return;"
+"o.textContent='Uploading...';try{let r=await fetch('/api/firmware',{method:'POST',headers:{'Content-Type':'application/octet-stream'},body:f});"
 "o.textContent=String(r.status)+' '+await r.text();}catch(e){o.textContent=String(e);}}"
 "</script></body></html>";
 
+/* lwIP send() can return a SHORT write. V9 ignored that result, which
+ * explains replies appearing as {"v / {"c in the browser.
+ * This routine either transfers the entire payload or reports failure. */
+static int send_full(int fd,const char *buf,unsigned n) {
+    unsigned done=0;
+    unsigned stalled=0;
+    while(done<n) {
+        unsigned batch=n-done;
+        int written;
+        if(batch>512u)batch=512u;
+        written=send(fd,buf+done,batch,0);
+        if(written>0){done+=(unsigned)written;stalled=0;continue;}
+        if(++stalled>2u)return -1;
+        msleep(20);
+    }
+    return 0;
+}
 static void reply(int fd,int status,const char*ctype,const char*text) {
-    char head[200];
+    char head[240];
+    unsigned len=(unsigned)strlen(text);
     int h=snprintf(head,sizeof head,"HTTP/1.0 %d %s\r\nConnection: close\r\nCache-Control: no-store\r\nContent-Type: %s\r\nContent-Length: %u\r\n\r\n",
-      status,status==200?"OK":status==403?"Forbidden":status==400?"Bad Request":"Failed",ctype,(unsigned)strlen(text));
-    if(h>0 && h<(int)sizeof head)send(fd,head,(size_t)h,0);
-    send(fd,text,strlen(text),0);
+        status,status==200?"OK":status==202?"Accepted":status==403?"Forbidden":status==404?"Not Found":status==400?"Bad Request":status==503?"Unavailable":"Failed",ctype,len);
+    if(h<1||h>=(int)sizeof head)return;
+    if(send_full(fd,head,(unsigned)h)!=0)return;
+    send_full(fd,text,len);
 }
 static const char* header_value(char*header,const char*key) {
     char*found=strstr(header,key);
@@ -58,16 +77,8 @@ static int upload(int fd,char *hdr,unsigned hdr_used,unsigned body_offset) {
     unsigned length,off=0,received=0;
     unsigned char buf[1024];
     const char *lenval=header_value(hdr,"Content-Length:");
-    const char *pinval=header_value(hdr,"X-OTA-Code:");
-    char pin[7];
     int rc;
-    if(!lenval||!pinval||strlen(pinval)<6) {reply(fd,400,"text/plain","Content-Length and X-OTA-Code required");return 0;}
-    for(rc=0;rc<6;rc++) {
-        if(pinval[rc]<'0'||pinval[rc]>'9') {reply(fd,400,"text/plain","Invalid OTA code");return 0;}
-        pin[rc]=pinval[rc];
-    }
-    pin[6]=0;
-    if(!baison_check_ota_pin(pin)){reply(fd,403,"text/plain","OTA locked; arm from BLE first");return 0;}
+    if(!lenval) {reply(fd,400,"text/plain","Content-Length required");return 0;}
     length=(unsigned)strtoul(lenval,NULL,10);
     if(length<260 || length>MAX_UPLOAD){reply(fd,400,"text/plain","Invalid OTA size");return 0;}
     received=hdr_used-body_offset;
@@ -83,8 +94,6 @@ static int upload(int fd,char *hdr,unsigned hdr_used,unsigned body_offset) {
         reply(fd,400,"text/plain","Only genuine W70 EPORT-PW41 OTA format accepted");
         return 0;
     }
-    /* Prevent two simultaneous OTA connections from reusing the same code. */
-    baison_ota_finish();
     if(hfupdate_start(HFUPDATE_SW)!=HF_SUCCESS) {
         reply(fd,500,"text/plain","OTA flash staging unavailable");return 0;
     }
@@ -129,6 +138,8 @@ static void connection_inner(int fd,char *hdr,char *msg) {
     struct timeval tm;
     tm.tv_sec=10;tm.tv_usec=0;
     setsockopt(fd,SOL_SOCKET,SO_RCVTIMEO,&tm,sizeof tm);
+    tm.tv_sec=5;tm.tv_usec=0;
+    setsockopt(fd,SOL_SOCKET,SO_SNDTIMEO,&tm,sizeof tm);
     while(n<HEADER_CAP) {
         got=recv(fd,hdr+n,HEADER_CAP-n,0);
         if(got<=0)break;
@@ -141,7 +152,26 @@ static void connection_inner(int fd,char *hdr,char *msg) {
     }
     if(body_offset==0){reply(fd,400,"text/plain","Incomplete HTTP request");return;}
     if(strncmp(hdr,"GET /ping ",10)==0) {
-        reply(fd,200,"text/plain","BAISON-W70-V9: HTTP alive");
+        reply(fd,200,"text/plain","BAISON-W70-V10: HTTP alive");
+        return;
+    }
+    if(strncmp(hdr,"GET /api/commands ",18)==0) {
+        baison_commands_json(msg,800);
+        reply(fd,200,"application/json",msg);
+        return;
+    }
+    if(strncmp(hdr,"POST /api/write?cmd=",20)==0) {
+        char cmd[32],confirm[8];
+        const char *p=hdr+20;
+        unsigned k=0;
+        while(p[k] && p[k]!=' ' && p[k]!='&' && k<sizeof cmd-1){cmd[k]=p[k];k++;}
+        cmd[k]=0;
+        confirm[0]=0;
+        /* No numeric PIN: one-time local BLE arming and explicit HTTP header. */
+        if(strstr(hdr,"X-Confirm: YES\r\n")) strcpy(confirm,"YES");
+        if(baison_local_write(cmd,confirm,msg,800)!=0)
+            reply(fd,403,"application/json","{\"ok\":false,\"error\":\"write_denied\"}");
+        else reply(fd,200,"application/json",msg);
         return;
     }
     if(strncmp(hdr,"GET /api/read?cmd=",18)==0) {
@@ -158,7 +188,7 @@ static void connection_inner(int fd,char *hdr,char *msg) {
         baison_health_json(msg,sizeof msg);
         reply(fd,200,"application/json",msg);return;
     }
-    if(strncmp(hdr,"GET / ",6)==0||strncmp(hdr,"GET /hide.html ",15)==0){
+    if(strncmp(hdr,"GET / ",6)==0||strncmp(hdr,"GET /hide ",10)==0||strncmp(hdr,"GET /hide.html ",15)==0){
         reply(fd,200,"text/html; charset=utf-8",recovery_page);return;
     }
     if(strncmp(hdr,"POST /api/firmware ",19)==0){upload(fd,hdr,n,body_offset);return;}
@@ -195,7 +225,7 @@ static void web_server(void *arg) {
         }
         if(listen(s,2)<0) {close(s);msleep(2000);continue;}
         baison_recovery_http_listening|=port==80?1u:2u;
-        u_printf("BAISON_V9_RECOVERY_HTTP_LISTEN %u\r\n",port);
+        u_printf("BAISON_V10_RECOVERY_HTTP_LISTEN %u\r\n",port);
         while(1) {
             struct sockaddr_in remote;
             socklen_t remotelen=sizeof remote;
@@ -212,5 +242,5 @@ static void web_server(void *arg) {
 void baison_recovery_start(void) {
     int a=hfthread_create(web_server,"baison_recovery8080",2048,(void*)(uintptr_t)8080,HFTHREAD_PRIORITIES_LOW,NULL,NULL);
     int b=hfthread_create(web_server,"baison_recovery80",2048,(void*)(uintptr_t)80,HFTHREAD_PRIORITIES_LOW,NULL,NULL);
-    u_printf("BAISON_V9_HTTP_TASKS %d %d\r\n",a,b);
+    u_printf("BAISON_V10_HTTP_TASKS %d %d\r\n",a,b);
 }
