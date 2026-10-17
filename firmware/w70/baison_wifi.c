@@ -31,7 +31,7 @@ static int mac_prefix(char *out,unsigned cap) {
 void baison_wifi_boot_config(void) {
     char name[33];
     if(mac_prefix(name,sizeof name)!=0)return;
-    memcpy(baison_ap_name,name,sizeof name);
+    snprintf(baison_ap_name,sizeof baison_ap_name,"%s",name);
     if(strcmp((const char*)g_hf_config_file.ap_ssid,name)!=0) {
         memset(g_hf_config_file.ap_ssid,0,sizeof g_hf_config_file.ap_ssid);
         memcpy(g_hf_config_file.ap_ssid,name,strlen(name));
@@ -46,16 +46,17 @@ const char *baison_wifi_ap_name(void) {return baison_ap_name;}
 void baison_wifi_status_json(char *out,unsigned cap) {
     char ssid[34]={0};
     unsigned i,p=0;
+    int rssi_dbm=0,connected=hfwifi_sta_is_connected();
     const unsigned char*in=g_hf_config_file.sta_ssid;
     for(i=0;i<32 && in[i] && p<sizeof ssid-1;i++) {
         unsigned char c=in[i];
-        ssid[p++]=(c>=' '&&c<=126&&c!='"'&&c!='\\')?(char)c:'_';
+        ssid[p++]=(c>=32&&c!=127&&c!='"'&&c!='\\')?(char)c:'_';
     }
     ssid[p]=0;
+    if(connected)hfwifi_sta_get_current_rssi(&rssi_dbm);
     snprintf(out,cap,
        "{\"ap\":\"%s\",\"connected\":%d,\"ssid\":\"%s\",\"rssi\":%d,\"configured\":%d}",
-       baison_ap_name,hfwifi_sta_is_connected(),ssid,
-       hfwifi_sta_get_rssi(),g_hf_config_file.sta_ssid[0]!=0);
+       baison_ap_name,connected,ssid,rssi_dbm,g_hf_config_file.sta_ssid[0]!=0);
 }
 static int json_text_append(char*dst,unsigned cap,unsigned *off,const char*text) {
     unsigned i;
@@ -138,7 +139,7 @@ int baison_wifi_scan_json(char*out,unsigned cap) {
     unsigned idx=scan_active;
     const char*src=wifi_scan_cache[idx];
     unsigned n=(unsigned)strlen(src);
-    if(!scan_ready) {
+    if(!scan_ready || scan_busy || scan_requested) {
         snprintf(out,cap,"{\"networks\":[],\"count\":0,\"scanning\":true}");
         return 0;
     }
@@ -187,6 +188,13 @@ int baison_wifi_save_form(const char *body,unsigned length) {
     n=(unsigned)strlen(ssid);
     if(n<1 || n>32)return -2;
     n=(unsigned)strlen(key);
+    /* Empty password means retain the stored key if this is exactly the
+       same secured SSID. New SSIDs without a key use OPEN authentication. */
+    if(n==0 && strcmp((const char*)g_hf_config_file.sta_ssid,ssid)==0 &&
+       g_hf_config_file.sta_key[0]!=0) {
+        snprintf(key,sizeof key,"%s",(const char*)g_hf_config_file.sta_key);
+        n=(unsigned)strlen(key);
+    }
     if(n!=0 && (n<8 || n>63))return -3;
     memset(g_hf_config_file.sta_ssid,0,sizeof g_hf_config_file.sta_ssid);
     memset(g_hf_config_file.sta_key,0,sizeof g_hf_config_file.sta_key);
