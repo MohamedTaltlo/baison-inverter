@@ -541,7 +541,45 @@ void baison_periodic(Client *client) {
        background just because a single PI30 query was rejected or delayed. */
     publish(client,manual?topic_reply:topic_readings,packet);
 }
+/* Factory pairing is injected into the private OTA image at packaging.
+ * The public placeholder is deliberately all-zero: it must never pair.
+ * Each physical W70 receives its OWN secret; no cross-device master key.
+ */
+static const char baison_factory_key_hex[41]=
+    "0000000000000000000000000000000000000000";
+
+static void baison_factory_pair_once(void) {
+    if(!baison_enrolled())(void)baison_enroll_hex(baison_factory_key_hex);
+}
+/* MQTT password is derived from the independent per-W70 command signing key,
+ * not the key itself. Broker needs w70-<mac12> and this 40-char hex password.
+ * Firmware continues HMAC-signature validation for every remote command.
+ */
+int baison_mqtt_credentials(const char *mac, char *user,unsigned usercap,
+                             char *pass,unsigned passcap) {
+    unsigned char digest[20];
+    char id[13]={0},input[80];
+    unsigned i,j=0;
+    int printed;
+    if(!mac||!user||!pass||usercap<17||passcap<41||!baison_enrolled())return -1;
+    for(i=0;mac[i]&&i<32&&j<12;i++) {
+        char c=mac[i];
+        if(c>='a'&&c<='f')c=(char)(c-32);
+        if((c>='0'&&c<='9')||(c>='A'&&c<='F'))id[j++]=c;
+    }
+    if(j!=12)return -1;
+    snprintf(user,usercap,"w70-%s",id);
+    printed=snprintf(input,sizeof(input),"BAISON|mqtt-auth|%s",id);
+    if(printed<=0||(unsigned)printed>=sizeof(input))return -1;
+    if(hfcrypto_hmac_sha1(g_hf_config_file.reserved1,20,
+          (const unsigned char*)input,printed,digest)!=HF_SUCCESS)return -1;
+    for(i=0;i<20;i++)snprintf(pass+i*2,3,"%02x",(unsigned)digest[i]);
+    memset(digest,0,sizeof(digest));
+    return 0;
+}
+
 void baison_serial_init(void) {
+    baison_factory_pair_once();
     hfthread_mutext_new(&serial_mutex);
     serial_handle=hfuart_open(0);
     if(serial_handle) {
