@@ -17,6 +17,8 @@
 static char topic_sub[96],topic_reply[96],topic_readings[96];
 static char queue_cmd[28], queue_id[48], queue_error[40];
 static int queued=0;
+static int queued_write=0;
+static char device_mac12[13]={0};
 static int serial_ready=0;
 static hfuart_handle_t serial_handle;
 static hfthread_mutex_t serial_mutex=NULL_MUTEX;
@@ -27,7 +29,7 @@ extern volatile unsigned int baison_recovery_http_listening;
 int baison_at_ver(pat_session_t session,int argc,char *argv[],char *rsp,int len) {
     (void)session;(void)argv;
     if(argc) return -3;
-    snprintf(rsp,(size_t)len,"=BAISON-W70-V13,baud=%u,mqtt=%d,http=%u,ota=LAN_NO_CODE",current_baud,baison_mqtt_connected,baison_recovery_http_listening);
+    snprintf(rsp,(size_t)len,"=BAISON-W70-V18,baud=%u,mqtt=%d,http=%u,ota=LAN_NO_CODE",current_baud,baison_mqtt_connected,baison_recovery_http_listening);
     return 0;
 }
 int baison_at_ota(pat_session_t session,int argc,char *argv[],char *rsp,int len) {
@@ -53,7 +55,7 @@ int baison_at_uart(pat_session_t session,int argc,char *argv[],char *rsp,int len
     snprintf(rsp,(size_t)len,"=%u",current_baud);return 0;
 }
 void baison_health_json(char *out,unsigned cap) {
-    snprintf(out,cap,"{\"version\":\"BAISON-W70-V13\",\"ota\":\"lan-no-code\",\"mqtt\":%d,\"serial_ready\":%d,\"uart_baud\":%u,\"write_armed\":%d,\"commands\":\"QPIGS,QPIRI,QMOD,QVFW,QID,QFLAG,POP00,POP01,PBT01,PBT02,MUCHGC010,PGR00\"}",
+    snprintf(out,cap,"{\"version\":\"BAISON-W70-V18\",\"ota\":\"lan-no-code\",\"mqtt\":%d,\"serial_ready\":%d,\"uart_baud\":%u,\"write_armed\":%d,\"commands\":\"QPIGS,QPIRI,QMOD,QVFW,QID,QFLAG,POP00,POP01,PBT01,PBT02,MUCHGC010,PGR00\"}",
         baison_mqtt_connected,serial_ready,current_baud,0);
 }
 static uint32_t next_poll=0;
@@ -143,6 +145,100 @@ static int id_safe(const char *id) {
     }
     return n>0 && n<46 && !id[n];
 }
+
+/* BAISON V18 device-scoped authenticated MQTT commands.
+ * Reserve only explicitly versioned bytes in the HSF configuration; never
+ * expose the secret through an API or MQTT response. Key is 20 random bytes.
+ * Configure on trusted LAN, then block HTTP from untrusted networks.
+ */
+#define BAISON_KEY_BYTES 20
+#define BAISON_SEQ_OFFSET 20
+#define BAISON_MAGIC_OFFSET 24
+static const unsigned char baison_key_magic[8]={'B','A','I','S','O','N','1','8'};
+static int baison_enrolled(void) {
+    return memcmp(g_hf_config_file.reserved1+BAISON_MAGIC_OFFSET,baison_key_magic,8)==0;
+}
+static int baison_hex_val(char c) {
+    if(c>='0'&&c<='9')return c-'0';
+    if(c>='a'&&c<='f')return c-'a'+10;
+    if(c>='A'&&c<='F')return c-'A'+10;
+    return -1;
+}
+int baison_enroll_hex(const char *hex) {
+    unsigned char temp[BAISON_KEY_BYTES];
+    unsigned i; int nonzero=0;
+    if(!hex||strlen(hex)!=40||baison_enrolled())return -1;
+    for(i=0;i<BAISON_KEY_BYTES;i++){
+        int a=baison_hex_val(hex[i*2]),b=baison_hex_val(hex[i*2+1]);
+        if(a<0||b<0)return -2;
+        temp[i]=(unsigned char)((a<<4)|b);
+        nonzero|=temp[i];
+    }
+    if(!nonzero)return -2;
+    memcpy(g_hf_config_file.reserved1,temp,BAISON_KEY_BYTES);
+    memset(g_hf_config_file.reserved1+BAISON_SEQ_OFFSET,0,4);
+    memcpy(g_hf_config_file.reserved1+BAISON_MAGIC_OFFSET,baison_key_magic,8);
+    hfconfig_file_save();
+    memset(temp,0,sizeof(temp));
+    return 0;
+}
+static uint32_t baison_last_seq(void) {
+    const uint8_t *p=g_hf_config_file.reserved1+BAISON_SEQ_OFFSET;
+    return (uint32_t)p[0]|((uint32_t)p[1]<<8)|((uint32_t)p[2]<<16)|((uint32_t)p[3]<<24);
+}
+static void baison_advance_seq(uint32_t seq) {
+    uint8_t *p=g_hf_config_file.reserved1+BAISON_SEQ_OFFSET;
+    p[0]=(uint8_t)seq;p[1]=(uint8_t)(seq>>8);
+    p[2]=(uint8_t)(seq>>16);p[3]=(uint8_t)(seq>>24);
+    /* Persist before execution: a power loss must never replay a setting. */
+    hfconfig_file_save();
+}
+void baison_identity_json(char *out,unsigned cap) {
+    char mac[32]={0};
+    if(!device_mac12[0]) hfnet_get_mac_address(mac);
+    snprintf(out,cap,
+       "{\"w70_id\":\"W70-%s\",\"mac12\":\"%s\",\"enrolled\":%s,\"inverter_internal_id_source\":\"QID\",\"external_serial_source\":\"technician_label\"}",
+       device_mac12[0]?device_mac12:mac,device_mac12,
+       baison_enrolled()?"true":"false");
+}
+/* Wire v2:
+   {"v":2,"id":"R123","cmd":"POP00","seq":"123","auth":"40hex"}
+   auth = HMAC-SHA1(key, "BAISON|v2|<mac12>|<id>|<cmd>|<seq>")
+   Authenticates every remote read/write; no generic arbitrary UART writes.
+   HMAC protects command integrity on an otherwise plaintext legacy MQTT link;
+   MQTT transport confidentiality still requires a private tunnel or TLS.
+ */
+static int baison_authorized(const char *id,const char *cmd,const char *seqtxt,
+                             const char *auth,uint32_t *newseq) {
+    char canonical[145],want[41];
+    unsigned char digest[20];
+    uint32_t value=0;
+    unsigned i; int unequal=0,printed;
+    if(!baison_enrolled()||!device_mac12[0]||strlen(auth)!=40)return 0;
+    if(!seqtxt[0]||strlen(seqtxt)>10 || (seqtxt[0]=='0'&&seqtxt[1]))return 0;
+    for(i=0;seqtxt[i];i++){
+        unsigned d=(unsigned)(seqtxt[i]-'0');
+        if(d>9 || value>(UINT32_MAX-d)/10)return 0;
+        value=value*10+d;
+    }
+    if(!value||value<=baison_last_seq())return 0;
+    printed=snprintf(canonical,sizeof(canonical),"BAISON|v2|%s|%s|%s|%s",
+                     device_mac12,id,cmd,seqtxt);
+    if(printed<=0||(unsigned)printed>=sizeof(canonical))return 0;
+    if(hfcrypto_hmac_sha1(g_hf_config_file.reserved1,BAISON_KEY_BYTES,
+                         (const unsigned char*)canonical,printed,digest)!=HF_SUCCESS)return 0;
+    for(i=0;i<20;i++)snprintf(want+i*2,3,"%02x",(unsigned)digest[i]);
+    for(i=0;i<40;i++){
+        int a=baison_hex_val(auth[i]),b=baison_hex_val(want[i]);
+        if(a<0)unequal=1;
+        else unequal|=(a^b);
+    }
+    memset(digest,0,sizeof(digest));
+    if(unequal)return 0;
+    *newseq=value;
+    return 1;
+}
+
 void baison_topics_init(const char *mac,char *sub,unsigned sub_cap,char *pub,unsigned pub_cap){
     char id[20];unsigned i,j=0;
     for(i=0;mac && mac[i] && i<32 && j<sizeof id-1;i++){
@@ -151,6 +247,7 @@ void baison_topics_init(const char *mac,char *sub,unsigned sub_cap,char *pub,uns
     }
     if(j!=12){memcpy(id,"w70unassigned",13);j=13;}
     id[j]=0;
+    if(j==12)memcpy(device_mac12,id,13);
     snprintf(topic_sub,sizeof topic_sub,"baison/v1/%s/cmd",id);
     snprintf(topic_reply,sizeof topic_reply,"baison/v1/%s/reply",id);
     snprintf(topic_readings,sizeof topic_readings,"baison/v1/%s/telemetry",id);
@@ -158,24 +255,32 @@ void baison_topics_init(const char *mac,char *sub,unsigned sub_cap,char *pub,uns
     snprintf(pub,pub_cap,"%s",topic_readings);
 }
 void baison_receive(MessageData *md) {
-    char cmd[28],id[48];
+    char cmd[28],id[48],seqtxt[16],auth[42];
+    uint32_t seq=0;
+    int iswrite;
     if(!md||!md->message||!md->topicName)return;
     if(md->topicName->lenstring.len!=(int)strlen(topic_sub)||
-       memcmp(md->topicName->lenstring.data,topic_sub,strlen(topic_sub))!=0)return;
-    if(md->message->payloadlen<=0||md->message->payloadlen>240)return;
-    if(get_json_string((const char*)md->message->payload,(unsigned)md->message->payloadlen,"cmd",cmd,sizeof cmd))return;
-    if(get_json_string((const char*)md->message->payload,(unsigned)md->message->payloadlen,"id",id,sizeof id))return;
-    if(!id_safe(id)||queued)return;
-    queue_error[0]=0;
-    if(!read_allowed(cmd) && !write_allowed(cmd)) {
-        strcpy(queue_error,"unsupported_command");
-    } else if(write_allowed(cmd)) {
-        /* Disable MQTT setting writes until mtradius.online has per-device
-         * authentication, replay prevention, and audited authorization. */
-        strcpy(queue_error,"remote_settings_waiting_for_server_security");
-    }
-    strcpy(queue_cmd,cmd);strcpy(queue_id,id);queued=1;
+       memcmp(md->topicName->lenstring.data,topic_sub,strlen(topic_sub)))return;
+    if(md->message->payloadlen<=0||md->message->payloadlen>240||queued)return;
+    if(get_json_string((const char*)md->message->payload,
+         (unsigned)md->message->payloadlen,"cmd",cmd,sizeof(cmd)))return;
+    if(get_json_string((const char*)md->message->payload,
+         (unsigned)md->message->payloadlen,"id",id,sizeof(id)))return;
+    if(!id_safe(id))return;
+    iswrite=write_allowed(cmd);
+    if(!read_allowed(cmd)&&!iswrite)return;
+    /* Authenticated commands only. Unprovisioned devices cannot accept
+       remote commands; local Wi-Fi configuration remains available. */
+    if(get_json_string((const char*)md->message->payload,
+         (unsigned)md->message->payloadlen,"seq",seqtxt,sizeof(seqtxt)))return;
+    if(get_json_string((const char*)md->message->payload,
+         (unsigned)md->message->payloadlen,"auth",auth,sizeof(auth)))return;
+    if(!baison_authorized(id,cmd,seqtxt,auth,&seq))return;
+    baison_advance_seq(seq);
+    strcpy(queue_cmd,cmd);strcpy(queue_id,id);
+    queue_error[0]=0;queued_write=iswrite;queued=1;
 }
+
 static void publish(Client *client,const char *topic,const char *text) {
     MQTTMessage msg;
     memset(&msg,0,sizeof msg);
@@ -397,7 +502,19 @@ void baison_periodic(Client *client) {
        snprintf(packet,sizeof packet,"{\"v\":1,\"id\":\"%s\",\"cmd\":\"%s\",\"ok\":false,\"error\":\"%s\"}",id,cmd,queue_error);
        queue_error[0]=0;
     } else {
-        int rc=inverter_query(cmd,response,sizeof response,&response_len);
+        int rc;
+        if(manual && queued_write) {
+            char written[850];
+            rc=baison_local_write(cmd,"YES",written,sizeof(written));
+            if(rc!=0)snprintf(packet,sizeof(packet),
+                 "{\"v\":2,\"id\":\"%s\",\"cmd\":\"%s\",\"ok\":false,\"error\":\"write_rejected_%d\"}",id,cmd,rc);
+            else snprintf(packet,sizeof(packet),
+                 "{\"v\":2,\"id\":\"%s\",\"cmd\":\"%s\",\"result\":%s}",id,cmd,written);
+            queued_write=0;
+            publish(client,topic_reply,packet);
+            return;
+        }
+        rc=inverter_query(cmd,response,sizeof response,&response_len);
         if(rc==-2) {
             snprintf(packet,sizeof packet,
                "{\"v\":1,\"id\":\"%s\",\"cmd\":\"%s\",\"ok\":false,\"error\":\"nak\"}",id,cmd);
