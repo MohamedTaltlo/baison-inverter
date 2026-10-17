@@ -276,7 +276,7 @@ static void connection_inner(int fd,char *hdr,char *msg) {
         msleep(1600);hfsys_reset();return;
     }
     if(strncmp(hdr,"GET /ping ",10)==0) {
-        reply(fd,200,"text/plain","BAISON-W70-V12: HTTP alive");
+        reply(fd,200,"text/plain","BAISON-W70-V13: HTTP alive");
         return;
     }
     if(strncmp(hdr,"GET /api/commands ",18)==0) {
@@ -338,7 +338,7 @@ static void web_server(void *arg) {
         }
         if(listen(s,2)<0) {close(s);msleep(2000);continue;}
         baison_recovery_http_listening|=port==80?1u:2u;
-        u_printf("BAISON_V12_RECOVERY_HTTP_LISTEN %u\r\n",port);
+        u_printf("BAISON_V13_RECOVERY_HTTP_LISTEN %u\r\n",port);
         while(1) {
             struct sockaddr_in remote;
             socklen_t remotelen=sizeof remote;
@@ -356,5 +356,5 @@ void baison_recovery_start(void) {
     int a=hfthread_create(web_server,"baison_recovery8080",2048,(void*)(uintptr_t)8080,HFTHREAD_PRIORITIES_LOW,NULL,NULL);
     int b=hfthread_create(web_server,"baison_recovery80",2048,(void*)(uintptr_t)80,HFTHREAD_PRIORITIES_LOW,NULL,NULL);
     baison_wifi_start_scan_worker();
-    u_printf("BAISON_V12_HTTP_TASKS %d %d\r\n",a,b);
+    u_printf("BAISON_V13_HTTP_TASKS %d %d\r\n",a,b);
 }
