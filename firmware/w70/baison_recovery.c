@@ -1,4 +1,4 @@
-/* BAISON W70 V7 on-device recovery: independent HTTP firmware uploader.
+/* BAISON W70 V8 on-device recovery: independent HTTP firmware uploader.
  * Safe by default: Web OTA locked until BLE AT+BAISONOTA=ON provides 6-digit PIN.
  * Same actual OTA flash API as HiFlying SDK, not a placeholder webpage.
  */
@@ -18,11 +18,11 @@ extern int baison_local_read(const char*,char*,unsigned);
 
 static const char recovery_page[] =
 "<!DOCTYPE html><html><head><meta charset='utf-8'><meta name='viewport' content='width=device-width,initial-scale=1'>"
-"<title>BAISON W70 V7 Firmware Recovery</title>"
+"<title>BAISON W70 V8 Firmware Recovery</title>"
 "<style>body{font:16px Arial;max-width:650px;margin:2em auto;padding:16px}label{display:block;margin:16px 0}"
 "button,input{padding:10px}button{background:#135cc7;color:white;border:0;border-radius:6px}"
 "pre{white-space:pre-wrap;background:#f0f0f0;padding:12px}</style></head><body>"
-"<h2>BAISON W70 V7 - Firmware Recovery</h2>"
+"<h2>BAISON W70 V8 - Firmware Recovery</h2>"
 "<p>Firmware image must be a verified W70 EPORT-PW41 OTA .bin.</p>"
 "<p>Local inverter test: <a href=/api/read?cmd=QPIGS>QPIGS</a> | <a href=/api/read?cmd=QPIRI>QPIRI</a> | <a href=/status>Status</a></p>"
 "<p>1. Connect by BLE FED4; send AT+BAISONOTA=ON (HEX 41 54 2B 42 41 49 53 4F 4E 4F 54 41 3D 4F 4E 0D).</p>"
@@ -161,36 +161,41 @@ static void connection(int fd) {
     if(strncmp(hdr,"POST /api/firmware ",19)==0){upload(fd,hdr,n,body_offset);return;}
     reply(fd,404,"text/plain","Not Found; use /hide.html or /status");
 }
+volatile unsigned int baison_recovery_http_listening = 0;
 static void web_server(void *arg) {
     unsigned port=(unsigned)(uintptr_t)arg;
-    int s;
-    while(!hfnet_wifi_is_active()) msleep(250);
-    s=socket(AF_INET,SOCK_STREAM,IPPROTO_TCP);
-    struct sockaddr_in addr;
-    int one=1;
-    if(s<0)goto end;
-    setsockopt(s,SOL_SOCKET,SO_REUSEADDR,&one,sizeof one);
-    memset(&addr,0,sizeof addr);
-    addr.sin_family=AF_INET;
-    addr.sin_addr.s_addr=INADDR_ANY;
-    addr.sin_port=htons((uint16_t)port);
-    if(bind(s,(struct sockaddr*)&addr,sizeof addr)<0)goto close_server;
-    if(listen(s,2)<0)goto close_server;
-    u_printf("BAISON_V7_RECOVERY_HTTP_LISTEN %u\r\n",port);
     while(1) {
-        struct sockaddr_in remote;
-        socklen_t remotelen=sizeof remote;
-        int peer=accept(s,(struct sockaddr*)&remote,&remotelen);
-        if(peer>=0){connection(peer);close(peer);}
-        else msleep(200);
+        struct sockaddr_in addr;
+        int s,one=1;
+        while(!hfnet_wifi_is_active()) msleep(250);
+        s=socket(AF_INET,SOCK_STREAM,IPPROTO_TCP);
+        if(s<0){msleep(2000);continue;}
+        setsockopt(s,SOL_SOCKET,SO_REUSEADDR,&one,sizeof one);
+        memset(&addr,0,sizeof addr);
+        addr.sin_family=AF_INET;
+        addr.sin_addr.s_addr=INADDR_ANY;
+        addr.sin_port=htons((uint16_t)port);
+        if(bind(s,(struct sockaddr*)&addr,sizeof addr)<0) {
+            close(s);msleep(2000);continue;
+        }
+        if(listen(s,2)<0) {close(s);msleep(2000);continue;}
+        baison_recovery_http_listening|=port==80?1u:2u;
+        u_printf("BAISON_V8_RECOVERY_HTTP_LISTEN %u\r\n",port);
+        while(1) {
+            struct sockaddr_in remote;
+            socklen_t remotelen=sizeof remote;
+            int peer=accept(s,(struct sockaddr*)&remote,&remotelen);
+            if(peer<0)break;
+            connection(peer);
+            close(peer);
+        }
+        baison_recovery_http_listening&=port==80?~1u:~2u;
+        close(s);
+        msleep(2000);
     }
-close_server:
-    close(s);
-end:
-    u_printf("BAISON_V7_RECOVERY_HTTP_EXIT %u\r\n",port);
-    hfthread_destroy(NULL);
 }
 void baison_recovery_start(void) {
-    hfthread_create(web_server,"baison_recovery80",1024,(void*)(uintptr_t)80,HFTHREAD_PRIORITIES_LOW,NULL,NULL);
-    hfthread_create(web_server,"baison_recovery8080",1024,(void*)(uintptr_t)8080,HFTHREAD_PRIORITIES_LOW,NULL,NULL);
+    int a=hfthread_create(web_server,"baison_recovery8080",1024,(void*)(uintptr_t)8080,HFTHREAD_PRIORITIES_LOW,NULL,NULL);
+    int b=hfthread_create(web_server,"baison_recovery80",1024,(void*)(uintptr_t)80,HFTHREAD_PRIORITIES_LOW,NULL,NULL);
+    u_printf("BAISON_V8_HTTP_TASKS %d %d\r\n",a,b);
 }
