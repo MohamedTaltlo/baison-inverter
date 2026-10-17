@@ -11,6 +11,8 @@ shutil.copyfile("firmware/w70/baison_fw.c",root/"src/baison_fw.c")
 shutil.copyfile("firmware/w70/baison_recovery.c",root/"src/baison_recovery.c")
 shutil.copyfile("firmware/w70/baison_wifi.c",root/"src/baison_wifi.c")
 shutil.copyfile("firmware/w70/baison_ui.c",root/"src/baison_ui.c")
+shutil.copyfile("firmware/w70/baison_settings.c",root/"src/baison_settings.c")
+shutil.copyfile("firmware/w70/baison_settings_ui.c",root/"src/baison_settings_ui.c")
 shutil.copyfile(root/"example/mqtt/mqtt.c",root/"src/mqtt.c")
 shutil.copyfile(root/"example/mqtt/mqtt.h",root/"src/mqtt.h")
 source=root/"src/app_main.c"
@@ -43,7 +45,7 @@ if s.count("BAISONOTA")!=1: raise SystemExit("Failed to integrate BAISON BLE AT 
 source.write_text(s,encoding="utf-8")
 mk=root/"src/Makefile.mk"
 m=mk.read_text(encoding="utf-8")
-m=m.replace("COMPONENT_SRCS := \t\t\tapp_main.c","COMPONENT_SRCS := app_main.c mqtt.c baison_fw.c baison_recovery.c baison_wifi.c baison_ui.c")
+m=m.replace("COMPONENT_SRCS := \t\t\tapp_main.c","COMPONENT_SRCS := app_main.c mqtt.c baison_fw.c baison_recovery.c baison_wifi.c baison_ui.c baison_settings.c baison_settings_ui.c")
 if "baison_fw.c" not in m: raise SystemExit("Failed to patch Makefile")
 mk.write_text(m,encoding="utf-8")
 p=root/"src/mqtt.c"
