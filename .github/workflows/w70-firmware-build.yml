@@ -51,9 +51,9 @@ jobs:
           file out/lpt570.bin
           chmod +x tools/IMG_Tools tools/lzma
           ./tools/IMG_Tools out/lpt570.bin ./out/lpt570-upgrade.bin ./tools/lzma "EPORT-PW41 Image" --version3
-          python3 ../firmware/w70/package_ota.py out/lpt570-upgrade.bin ../BAISON_W70_V13_OTA_EXPERIMENTAL.bin
+          python3 ../firmware/w70/package_ota.py out/lpt570-upgrade.bin ../BAISON_W70_V18_OTA_EXPERIMENTAL.bin
       - uses: actions/upload-artifact@v4
         with:
-          name: BAISON-W70-V13-OTA-Experimental-Factory-Envelope
-          path: BAISON_W70_V13_OTA_EXPERIMENTAL.bin
+          name: BAISON-W70-V18-OTA-Experimental-Factory-Envelope
+          path: BAISON_W70_V18_OTA_EXPERIMENTAL.bin
           if-no-files-found: error
