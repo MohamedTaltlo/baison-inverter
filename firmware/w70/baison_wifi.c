@@ -90,16 +90,61 @@ static int scan_cb(PWIFI_SCAN_RESULT_ITEM item,void *ptr) {
     ctx->out[n]=0;
     return 0;
 }
+
+/* Wi-Fi scans can take ~3 s. Never scan inside the HTTP request task.
+ * A low-priority worker publishes double-buffered JSON. */
+static char wifi_scan_cache[2][1300]={
+  "{\"networks\":[],\"count\":0,\"scanning\":true}",
+  "{\"networks\":[],\"count\":0,\"scanning\":true}"
+};
+static volatile unsigned scan_active=0,scan_requested=1,scan_busy=0,scan_ready=0;
+static volatile uint32_t scan_ms=0;
+void baison_wifi_scan_request(void) {
+    if(!scan_busy)scan_requested=1;
+}
+static void baison_wifi_scan_worker(void *unused) {
+    (void)unused;
+    for(;;) {
+        if(!scan_requested || scan_busy || !hfnet_wifi_is_active()) {
+            msleep(300);continue;
+        }
+        scan_requested=0;
+        scan_busy=1;
+        {
+            unsigned idx=scan_active^1;
+            wifi_scan_ctx ctx;
+            int rc;
+            memset(&ctx,0,sizeof ctx);
+            ctx.out=wifi_scan_cache[idx];ctx.cap=sizeof wifi_scan_cache[idx];
+            memcpy(ctx.out,"{\"networks\":[",13);
+            ctx.off=13;ctx.out[13]=0;
+            rc=hfwifi_scan_ex(scan_cb,&ctx,0,3);
+            if(ctx.off+85<ctx.cap) {
+                snprintf(ctx.out+ctx.off,ctx.cap-ctx.off,
+                     "],\"count\":%u,\"scan_result\":%d,\"scanning\":false}",ctx.count,rc);
+                scan_active=idx;
+                scan_ready=1;
+                scan_ms=hfsys_get_time();
+            }
+        }
+        scan_busy=0;
+    }
+}
+void baison_wifi_start_scan_worker(void) {
+    hfthread_create(baison_wifi_scan_worker,"baison_wifi_scan",512,NULL,
+                    HFTHREAD_PRIORITIES_LOW,NULL,NULL);
+}
 int baison_wifi_scan_json(char*out,unsigned cap) {
-    wifi_scan_ctx ctx;
-    int rc;
-    if(cap<300)return -1;
-    memset(&ctx,0,sizeof ctx);ctx.out=out;ctx.cap=cap;
-    memcpy(out,"{\"networks\":[",13);ctx.off=13;out[13]=0;
-    rc=hfwifi_scan_ex(scan_cb,&ctx,0,3);
-    if(ctx.off+50>=cap)return -1;
-    snprintf(out+ctx.off,cap-ctx.off,
-          "],\"count\":%u,\"scan_result\":%d}",ctx.count,rc);
+    unsigned idx=scan_active;
+    const char*src=wifi_scan_cache[idx];
+    unsigned n=(unsigned)strlen(src);
+    if(!scan_ready) {
+        snprintf(out,cap,"{\"networks\":[],\"count\":0,\"scanning\":true}");
+        return 0;
+    }
+    if(n+1>cap)return -1;
+    memcpy(out,src,n+1);
+    (void)scan_ms;
     return 0;
 }
 static int fromhex(char c) {
