@@ -12,7 +12,7 @@
 
 #define PI30_RX_MAX 384
 #define PI30_WAIT_MS 2500u
-#define BAISON_POLL_INTERVAL_MS 30000u
+#define BAISON_POLL_INTERVAL_MS 45000u
 
 static char topic_sub[96],topic_reply[96],topic_readings[96];
 static char queue_cmd[28], queue_id[48], queue_error[40];
@@ -30,7 +30,7 @@ static int baison_enrolled(void);
 int baison_at_ver(pat_session_t session,int argc,char *argv[],char *rsp,int len) {
     (void)session;(void)argv;
     if(argc) return -3;
-    snprintf(rsp,(size_t)len,"=BAISON-W70-V20,baud=%u,mqtt=%d,http=%u,ota=LAN_NO_CODE",current_baud,baison_mqtt_connected,baison_recovery_http_listening);
+    snprintf(rsp,(size_t)len,"=BAISON-W70-V21,baud=%u,mqtt=%d,http=%u,ota=LAN_NO_CODE",current_baud,baison_mqtt_connected,baison_recovery_http_listening);
     return 0;
 }
 int baison_at_ota(pat_session_t session,int argc,char *argv[],char *rsp,int len) {
@@ -56,7 +56,7 @@ int baison_at_uart(pat_session_t session,int argc,char *argv[],char *rsp,int len
     snprintf(rsp,(size_t)len,"=%u",current_baud);return 0;
 }
 void baison_health_json(char *out,unsigned cap) {
-    snprintf(out,cap,"{\"version\":\"BAISON-W70-V20\",\"ota\":\"lan-no-code\",\"mqtt\":%d,\"remote_ready\":%s,\"protocol\":2,\"serial_ready\":%d,\"uart_baud\":%u,\"commands\":\"QPIGS,QPIRI,QMOD,QVFW,QID,QSID,QFLAG,POP00,POP01,PBT01,PBT02,MUCHGC010,PGR00,PF\"}",
+    snprintf(out,cap,"{\"version\":\"BAISON-W70-V21\",\"ota\":\"lan-no-code\",\"mqtt\":%d,\"remote_ready\":%s,\"protocol\":2,\"serial_ready\":%d,\"uart_baud\":%u,\"commands\":\"QPIGS,QPIRI,QMOD,QVFW,QID,QSID,QFLAG,POP00,POP01,PBT01,PBT02,MUCHGC010,PGR00,PF\"}",
         baison_mqtt_connected,baison_enrolled()?"true":"false",serial_ready,current_baud);
 }
 
@@ -598,7 +598,7 @@ static void baison_poll_worker(void *unused) {
         }
         if(!link_start)link_start=hfsys_get_time();
         /* Allow WLAN/MQTT to settle before the first UART request. */
-        if((uint32_t)(hfsys_get_time()-link_start)<7000u) {
+        if((uint32_t)(hfsys_get_time()-link_start)<12000u) {
             msleep(250);continue;
         }
         baison_worker_iteration();
