@@ -28,31 +28,32 @@ extern void baison_wifi_start_scan_worker(void);
 extern int baison_wifi_save_form(const char*,unsigned);
 extern void baison_wifi_forget(void);
 static const char recovery_page[] =
-"<!DOCTYPE html><html><head><meta charset='utf-8'><meta name='viewport' content='width=device-width,initial-scale=1'>"
-"<title>BAISON W70 V12 Firmware Recovery</title>"
-"<style>body{font:16px Arial;max-width:650px;margin:2em auto;padding:16px}label{display:block;margin:16px 0}"
-"button,input{padding:10px}button{background:#135cc7;color:white;border:0;border-radius:6px}"
-"pre{white-space:pre-wrap;background:#f0f0f0;padding:12px}</style></head><body>"
-"<h2>BAISON W70 V12 - Firmware Recovery</h2>"
-"<p>Firmware image must be a verified W70 EPORT-PW41 OTA .bin.</p>"
-"<p>Tests: <a href=/ping>Ping</a> | <a href=/status>Status</a> | <a href=/api/read?cmd=QPIGS>QPIGS</a> | <a href=/api/read?cmd=QPIRI>QPIRI</a></p>"
-"<p><b>OTA requires no codes.</b> Keep this device isolated on your own LAN.</p>"
-"<p><a href='/api/commands'>Supported protocol commands</a></p>"
-"<label>W70 OTA .bin <input type='file' id='file' accept='.bin'></label>"
-"<button onclick='update()'>Upload and verify firmware</button>"
-"<pre id='output'>No upload started.</pre>"
-"<p>HTTP is local-only and has no TLS. Do not expose this port to the Internet.</p>"
-"<script>"
-"async function update(){let f=document.getElementById('file').files[0];let o=document.getElementById('output');"
-"if(!f){o.textContent='Choose a W70 .bin';return;}"
-"if(!confirm('Apply this firmware update to W70?'))return;"
-"o.textContent='Uploading...';try{let r=await fetch('/api/firmware',{method:'POST',headers:{'Content-Type':'application/octet-stream'},body:f});"
-"o.textContent=String(r.status)+' '+await r.text();}catch(e){o.textContent=String(e);}}"
-"</script></body></html>";
+"<!doctype html><html lang=\"ar\" dir=\"rtl\"><head><meta charset=\"utf-8\"><meta name=\"viewport\" content=\"width=device-width,initial-scale=1\"><meta name=\"theme-color\" content=\"#f7f9fc\"><title>BAISON | تحديث البرنامج</title><style>\n"
+":root{color-scheme:light}*{box-sizing:border-box}body{background:#f6f8fc;color:#183148;font:15px/1.75 system-ui,Tahoma,Arial,sans-serif;margin:0}.wrap{max-width:680px;margin:30px auto;padding:0 16px}\n"
+"h1{font-size:24px;margin:0 0 5px}.sub{color:#6d8095;font-size:13px}.box{background:white;border:1px solid #e3eaf2;border-radius:18px;padding:25px;margin-top:20px;box-shadow:0 8px 24px #263b4b0a}\n"
+"label{display:block;font-weight:700;margin:20px 0 8px}input{border:1px dashed #afc6e6;border-radius:12px;padding:16px;background:#f5f9ff;width:100%;font:inherit}button,a.btn{display:inline-block;border:0;border-radius:11px;background:#1967d2;color:white;padding:12px 18px;text-decoration:none;font:inherit;font-weight:700;cursor:pointer}a.btn{background:white;color:#1967d2;border:1px solid #bcd3ee}.bar{display:flex;gap:12px;margin:16px 0}\n"
+".note{padding:12px 14px;border-radius:11px;background:#fff6e9;color:#8b5f1b;font-size:13px}.result{margin-top:14px;color:#2b597e;white-space:pre-wrap;overflow-wrap:anywhere}\n"
+"footer{text-align:center;color:#7c8ca3;font-size:12px;margin:26px 0}\n"
+"</style></head><body><main class=\"wrap\"><div class=\"bar\"><a class=\"btn\" href=\"/\">الصفحة الرئيسية</a><a class=\"btn\" href=\"/settings\">إعدادات الإنفرتر</a></div>\n"
+"<section class=\"box\"><h1>تحديث برنامج القطعة</h1><div class=\"sub\">تثبيت تحديث OTA من جهازك مباشرة، بدون رموز تحقق.</div>\n"
+"<div class=\"note\">يرجى إبقاء الكهرباء مستقرة وعدم إغلاق الجهاز أثناء التحديث. خدمة التحديث مفتوحة داخل الشبكة؛ لا تسمح للأجهزة غير الموثوقة بالوصول إليها.</div>\n"
+"<label for=\"file\">اختر ملف تحديث BAISON بصيغة .bin</label><input id=\"file\" type=\"file\" accept=\".bin\">\n"
+"<div class=\"bar\"><button id=\"upload\" onclick=\"update()\">رفع التحديث وتثبيته</button></div><div class=\"result\" id=\"msg\">جاهز لاختيار الملف.</div>\n"
+"</section><footer>Developed by: MT_RADIUS 2020-<span id=\"yr\"></span></footer></main>\n"
+"<script>\n"
+"document.getElementById('yr').textContent=new Date().getFullYear();\n"
+"async function update(){\n"
+"let f=document.getElementById('file').files[0],out=document.getElementById('msg'),btn=document.getElementById('upload');\n"
+"if(!f){out.textContent='اختر ملف .bin أولاً';return;}\n"
+"if(!confirm('هل تريد تثبيت ملف '+f.name+' وإعادة تشغيل القطعة؟'))return;\n"
+"btn.disabled=true;out.textContent='جار إرسال الملف والتحقق منه...';\n"
+"try{let r=await fetch('/api/firmware',{method:'POST',headers:{'Content-Type':'application/octet-stream'},body:f});\n"
+"let t=await r.text();out.textContent=r.ok?'تم قبول التحديث. انتظر إعادة تشغيل القطعة.\\n'+t:'تعذر إكمال التحديث: '+t;}\n"
+"catch(e){out.textContent='انقطع الاتصال أثناء التحديث. انتظر عودة القطعة ثم افتح الصفحة من جديد.';}\n"
+"finally{btn.disabled=false;}\n"
+"}\n"
+"</script></body></html>\n";
 
-/* lwIP send() can return a SHORT write. V9 ignored that result, which
- * explains replies appearing as {"v / {"c in the browser.
- * This routine either transfers the entire payload or reports failure. */
 static int send_full(int fd,const char *buf,unsigned n) {
     unsigned done=0;
     unsigned stalled=0;
@@ -294,7 +295,7 @@ static void connection_inner(int fd,char *hdr,char *msg) {
         return;
     }
     if(strncmp(hdr,"GET /status ",12)==0||strncmp(hdr,"GET /api/status ",16)==0){
-        baison_health_json(msg,800u);
+        baison_health_json(msg,RESPONSE_CAP);
         reply(fd,200,"application/json",msg);return;
     }
     if(strncmp(hdr,"GET / ",6)==0) {
