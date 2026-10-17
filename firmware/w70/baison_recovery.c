@@ -14,7 +14,6 @@
 #define HEADER_CAP 1600
 extern void baison_health_json(char*,unsigned);
 extern int baison_local_read(const char*,char*,unsigned);
-extern int baison_local_write(const char*,const char*,char*,unsigned);
 extern void baison_commands_json(char*,unsigned);
 
 static const char recovery_page[] =
@@ -160,32 +159,18 @@ static void connection_inner(int fd,char *hdr,char *msg) {
         reply(fd,200,"application/json",msg);
         return;
     }
-    if(strncmp(hdr,"POST /api/write?cmd=",20)==0) {
-        char cmd[32],confirm[8];
-        const char *p=hdr+20;
-        unsigned k=0;
-        while(p[k] && p[k]!=' ' && p[k]!='&' && k<sizeof cmd-1){cmd[k]=p[k];k++;}
-        cmd[k]=0;
-        confirm[0]=0;
-        /* No numeric PIN: one-time local BLE arming and explicit HTTP header. */
-        if(strstr(hdr,"X-Confirm: YES\r\n")) strcpy(confirm,"YES");
-        if(baison_local_write(cmd,confirm,msg,800)!=0)
-            reply(fd,403,"application/json","{\"ok\":false,\"error\":\"write_denied\"}");
-        else reply(fd,200,"application/json",msg);
-        return;
-    }
     if(strncmp(hdr,"GET /api/read?cmd=",18)==0) {
-        char cmd[20];
+        char cmd[28];
         const char *p=hdr+18;
         unsigned k=0;
         while(p[k] && p[k]!=' ' && p[k]!='&' && k<sizeof cmd-1){cmd[k]=p[k];k++;}
         cmd[k]=0;
-        if(baison_local_read(cmd,msg,sizeof msg)!=0) reply(fd,400,"text/plain","Unsupported read command");
+        if(baison_local_read(cmd,msg,800u)!=0) reply(fd,400,"text/plain","Unsupported read command");
         else reply(fd,200,"application/json",msg);
         return;
     }
     if(strncmp(hdr,"GET /status ",12)==0||strncmp(hdr,"GET /api/status ",16)==0){
-        baison_health_json(msg,sizeof msg);
+        baison_health_json(msg,800u);
         reply(fd,200,"application/json",msg);return;
     }
     if(strncmp(hdr,"GET / ",6)==0||strncmp(hdr,"GET /hide ",10)==0||strncmp(hdr,"GET /hide.html ",15)==0){
@@ -197,7 +182,7 @@ static void connection_inner(int fd,char *hdr,char *msg) {
 static void connection(int fd) {
     /* V8 kept a 1601-byte request buffer and an 800-byte response on a
        4 KB FreeRTOS stack, then invoked nested PI30 and snprintf calls.
-       V9 allocates both from the heap, and the HTTP thread has an 8 KB stack. */
+       V10 uses bounded buffers and explicit 800-byte capacities. */
     char *buffers=(char*)malloc(HEADER_CAP+1+800);
     if(!buffers){
         reply(fd,503,"text/plain","No RAM for HTTP request");
