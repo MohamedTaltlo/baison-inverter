@@ -163,7 +163,9 @@ static void connection(int fd) {
 }
 static void web_server(void *arg) {
     unsigned port=(unsigned)(uintptr_t)arg;
-    int s=socket(AF_INET,SOCK_STREAM,IPPROTO_TCP);
+    int s;
+    while(!hfnet_wifi_is_active()) msleep(250);
+    s=socket(AF_INET,SOCK_STREAM,IPPROTO_TCP);
     struct sockaddr_in addr;
     int one=1;
     if(s<0)goto end;
