@@ -18,6 +18,8 @@ extern int baison_local_read(const char*,char*,unsigned);
 extern void baison_commands_json(char*,unsigned);
 
 extern const char baison_home_page[];
+extern const char baison_settings_page[];
+extern int baison_local_write(const char*,const char*,const char*,char*,unsigned);
 extern const char *baison_wifi_ap_name(void);
 extern void baison_wifi_status_json(char*,unsigned);
 extern int baison_wifi_scan_json(char*,unsigned);
@@ -138,6 +140,27 @@ static int upload(int fd,char *hdr,unsigned hdr_used,unsigned body_offset) {
     hfsys_reset();
     return 1;
 }
+
+static int form_extract(const char*data,unsigned length,const char*key,char*out,unsigned cap) {
+    unsigned i=0,n=(unsigned)strlen(key);
+    if(cap==0)return -1;
+    out[0]=0;
+    while(i+n+1<=length) {
+        if((i==0||data[i-1]=='&') &&
+           memcmp(data+i,key,n)==0 && data[i+n]=='=') {
+            unsigned j=i+n+1,p=0;
+            while(j<length && data[j]!='&') {
+                unsigned char c=(unsigned char)data[j++];
+                if(c=='+' || c=='%' || c<32 || c>126 || p+1>=cap)return -1;
+                out[p++]=(char)c;
+            }
+            out[p]=0;return 0;
+        }
+        while(i<length && data[i]!='&')i++;
+        i++;
+    }
+    return -1;
+}
 static void connection_inner(int fd,char *hdr,char *msg) {
     int got;
     unsigned n=0,body_offset=0;
@@ -158,6 +181,9 @@ static void connection_inner(int fd,char *hdr,char *msg) {
     }
     if(body_offset==0){reply(fd,400,"text/plain","Incomplete HTTP request");return;}
 
+    if(strncmp(hdr,"GET /settings ",14)==0) {
+        reply(fd,200,"text/html; charset=utf-8",baison_settings_page);return;
+    }
     if(strncmp(hdr,"GET /api/wifi/status ",21)==0) {
         baison_wifi_status_json(msg,RESPONSE_CAP);
         reply(fd,200,"application/json",msg);return;
@@ -182,6 +208,35 @@ static void connection_inner(int fd,char *hdr,char *msg) {
         baison_wifi_forget();
         reply(fd,200,"text/plain","Wi-Fi credentials cleared. Rebooting into setup AP...");
         msleep(1300);hfsys_reset();return;
+    }
+    if(strncmp(hdr,"POST /api/inverter/write ",25)==0) {
+        char form[220],cmd[38],pin[9];
+        const char*sizev=header_value(hdr,"Content-Length:");
+        unsigned len,have;
+        int rc;
+        if(!sizev || strstr(hdr,"X-W70-Action: confirm\r\n")==NULL) {
+            reply(fd,403,"text/plain","Confirmed local POST required");return;
+        }
+        len=(unsigned)strtoul(sizev,NULL,10);
+        if(len==0||len>=sizeof form){reply(fd,400,"text/plain","Invalid form");return;}
+        have=n-body_offset;
+        if(have>len)have=len;
+        if(have)memcpy(form,hdr+body_offset,have);
+        while(have<len){
+           int count=recv(fd,form+have,len-have,0);
+           if(count<=0){reply(fd,400,"text/plain","Partial setting request");return;}
+           have+=(unsigned)count;
+        }
+        rc=form_extract(form,len,"command",cmd,sizeof cmd);
+        if(rc==0)rc=form_extract(form,len,"pin",pin,sizeof pin);
+        memset(form,0,sizeof form);
+        if(rc!=0){reply(fd,400,"text/plain","Missing command or authorization");return;}
+        rc=baison_local_write(cmd,pin,"YES",msg,RESPONSE_CAP);
+        memset(pin,0,sizeof pin);
+        if(rc!=0){
+           reply(fd,403,"application/json","{\"ok\":false,\"error\":\"invalid_command_or_local_authorization\"}");return;
+        }
+        reply(fd,200,"application/json",msg);return;
     }
     if(strncmp(hdr,"POST /api/wifi/save ",20)==0) {
         const char*sizev=header_value(hdr,"Content-Length:");
