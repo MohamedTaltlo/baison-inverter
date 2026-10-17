@@ -205,8 +205,8 @@ static void connection_inner(int fd,char *hdr,char *msg) {
         unsigned len,have;
         int enrolled;
         const char *length_text=header_value(hdr,"Content-Length:");
-        if(!length_text||!strstr(hdr,"X-W70-Action: confirm\\r\\n")) {
-           reply(fd,403,"application/json","{\\"ok\\":false,\\"error\\":\\"local_confirmation_required\\"}");return;
+        if(!length_text||!strstr(hdr,"X-W70-Action: confirm\r\n")) {
+           reply(fd,403,"application/json","{\"ok\":false,\"error\":\"local_confirmation_required\"}");return;
         }
         len=(unsigned)strtoul(length_text,NULL,10);
         if(len<44||len>=sizeof(form)){reply(fd,400,"text/plain","invalid enrollment payload");return;}
@@ -222,8 +222,8 @@ static void connection_inner(int fd,char *hdr,char *msg) {
         }
         memset(form,0,sizeof(form));
         enrolled=baison_enroll_hex(key);memset(key,0,sizeof(key));
-        if(enrolled==0)reply(fd,200,"application/json","{\\"ok\\":true,\\"enrolled\\":true}");
-        else reply(fd,403,"application/json","{\\"ok\\":false,\\"error\\":\\"already_enrolled_or_invalid_key\\"}");
+        if(enrolled==0)reply(fd,200,"application/json","{\"ok\":true,\"enrolled\":true}");
+        else reply(fd,403,"application/json","{\"ok\":false,\"error\":\"already_enrolled_or_invalid_key\"}");
         return;
     }
     if(strncmp(hdr,"GET /api/wifi/status ",21)==0) {
