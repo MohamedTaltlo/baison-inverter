@@ -33,7 +33,7 @@ static int until(uint32_t expiry) {
 int baison_at_ver(pat_session_t session,int argc,char *argv[],char *rsp,int len) {
     (void)session;(void)argv;
     if(argc) return -3;
-    snprintf(rsp,(size_t)len,"=BAISON-W70-V10,baud=%u,mqtt=%d,http=%u,ota=LAN_NO_CODE",current_baud,baison_mqtt_connected,baison_recovery_http_listening);
+    snprintf(rsp,(size_t)len,"=BAISON-W70-V11,baud=%u,mqtt=%d,http=%u,ota=LAN_NO_CODE",current_baud,baison_mqtt_connected,baison_recovery_http_listening);
     return 0;
 }
 int baison_at_ota(pat_session_t session,int argc,char *argv[],char *rsp,int len) {
@@ -64,7 +64,7 @@ int baison_at_uart(pat_session_t session,int argc,char *argv[],char *rsp,int len
     snprintf(rsp,(size_t)len,"=%u",current_baud);return 0;
 }
 void baison_health_json(char *out,unsigned cap) {
-    snprintf(out,cap,"{\"version\":\"BAISON-W70-V10\",\"ota\":\"lan-no-code\",\"mqtt\":%d,\"serial_ready\":%d,\"uart_baud\":%u,\"write_armed\":%d,\"commands\":\"QPIGS,QPIRI,QMOD,QVFW,QID,QFLAG,POP00,POP01,PBT01,PBT02,MUCHGC010,PGR00\"}",
+    snprintf(out,cap,"{\"version\":\"BAISON-W70-V11\",\"ota\":\"lan-no-code\",\"mqtt\":%d,\"serial_ready\":%d,\"uart_baud\":%u,\"write_armed\":%d,\"commands\":\"QPIGS,QPIRI,QMOD,QVFW,QID,QFLAG,POP00,POP01,PBT01,PBT02,MUCHGC010,PGR00\"}",
         baison_mqtt_connected,serial_ready,current_baud,until(write_expires));
 }
 static uint32_t next_poll=0;
@@ -84,7 +84,7 @@ static int read_allowed(const char *s) {
 }
 void baison_commands_json(char *out,unsigned cap) {
     snprintf(out,cap,
-    "{\"v\":10,\"query_format\":\"Q + uppercase letters and digits, 2-24 chars\","
+    "{\"v\":11,\"query_format\":\"Q + uppercase letters and digits, 2-24 chars\","
     "\"queries\":\"QPI,QID,QSID,QVFW,QVFW2,QVFW3,QPIRI,QFLAG,QPIGS,QPIGS2,QMOD,QPIWS,QDI,QMCHGCR,QMUCHGCR,QOPPT,QCHPT,QT,QBEQI,QMN,QGMN,QET,QLT,QPGS0,QPGS1\","
     "\"verified_writes\":\"POP00,POP01,PBT01,PBT02,MUCHGC010,PGR00\","
     "\"note\":\"Query availability varies by inverter; settings commands are restricted\"}");
@@ -353,20 +353,25 @@ void baison_periodic(Client *client) {
     if(queue_error[0]) {
        snprintf(packet,sizeof packet,"{\"v\":1,\"id\":\"%s\",\"cmd\":\"%s\",\"ok\":false,\"error\":\"%s\"}",id,cmd,queue_error);
        queue_error[0]=0;
-    } else if(inverter_query(cmd,response,sizeof response,&response_len)!=0 ||
-       encode64(response,response_len,encoded,sizeof encoded)<0){
-       snprintf(packet,sizeof packet,"{\"v\":1,\"id\":\"%s\",\"cmd\":\"%s\",\"ok\":false,\"error\":\"inverter_timeout\"}",id,cmd);
     } else {
-       snprintf(packet,sizeof packet,"{\"v\":1,\"id\":\"%s\",\"cmd\":\"%s\",\"ok\":true,\"co\":\"%s\"}",id,cmd,encoded);
-    }
-    if(strstr(packet,"\"inverter_timeout\"")!=NULL && !manual) {
-        consecutive_uart_failures++;
-        if(consecutive_uart_failures>=3 && serial_ready) {
-            unsigned next=current_baud==2400?9600:2400;
-            if(hfuart_config(serial_handle,(int)next,COMPARITY_NONE,COMBITS_8,COMSTOPBITS_1,COMUARTNFC)==HF_SUCCESS) current_baud=next;
-            consecutive_uart_failures=0;
+        int rc=inverter_query(cmd,response,sizeof response,&response_len);
+        if(rc==-2) {
+            snprintf(packet,sizeof packet,
+               "{\"v\":1,\"id\":\"%s\",\"cmd\":\"%s\",\"ok\":false,\"error\":\"nak\"}",id,cmd);
+        } else if(rc!=0) {
+            snprintf(packet,sizeof packet,
+               "{\"v\":1,\"id\":\"%s\",\"cmd\":\"%s\",\"ok\":false,\"error\":\"%s\"}",
+               id,cmd,rc==-3?"stale_response_mismatch":"inverter_timeout");
+        } else if(encode64(response,response_len,encoded,sizeof encoded)<0) {
+            snprintf(packet,sizeof packet,
+               "{\"v\":1,\"id\":\"%s\",\"cmd\":\"%s\",\"ok\":false,\"error\":\"encoding_failed\"}",id,cmd);
+        } else {
+            snprintf(packet,sizeof packet,
+               "{\"v\":1,\"id\":\"%s\",\"cmd\":\"%s\",\"ok\":true,\"co\":\"%s\"}",id,cmd,encoded);
         }
-    } else if(strstr(packet,"\"ok\":true")!=NULL) consecutive_uart_failures=0;
+    }
+    /* Observed device UART works at 2400 baud. Do not change it in the
+       background just because a single PI30 query was rejected or delayed. */
     publish(client,manual?topic_reply:topic_readings,packet);
 }
 void baison_serial_init(void) {
