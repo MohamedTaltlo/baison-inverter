@@ -50,7 +50,7 @@ if "baison_fw.c" not in m: raise SystemExit("Failed to patch Makefile")
 mk.write_text(m,encoding="utf-8")
 p=root/"src/mqtt.c"
 s=p.read_text(encoding="latin-1")
-s=s.replace('#include "MQTTClient.h"','#include "MQTTClient.h"\nextern void baison_topics_init(const char*,char*,unsigned,char*,unsigned);\nextern void baison_receive(MessageData*);\nextern void baison_periodic(Client*);')
+s=s.replace('#include "MQTTClient.h"','#include "MQTTClient.h"\nextern void baison_topics_init(const char*,char*,unsigned,char*,unsigned);\nextern void baison_receive(MessageData*);\nextern void baison_periodic(Client*);\nextern int baison_mqtt_credentials(const char*,char*,unsigned,char*,unsigned);')
 s=s.replace("static void mqtt_start(void)","void mqtt_start(void)")
 s=s.replace("static int mqtt_is_connected = 0;","volatile int baison_mqtt_connected = 0;")
 s=s.replace("mqtt_is_connected","baison_mqtt_connected")
@@ -63,9 +63,9 @@ s=s.replace('strcpy(mqtt->username, "admin");','strcpy(mqtt->username, "");')
 s=s.replace('strcpy(mqtt->password, "admin");','strcpy(mqtt->password, "");')
 # UART parsing is owned only by the new bridge (read only).
 s=s.replace('MQTTConnectData.username.cstring = g_mqtt_config.username;',
-            'MQTTConnectData.username.cstring = NULL;')
+            'MQTTConnectData.username.cstring = g_mqtt_config.username;')
 s=s.replace('MQTTConnectData.password.cstring = g_mqtt_config.password;',
-            'MQTTConnectData.password.cstring = NULL;')
+            'MQTTConnectData.password.cstring = g_mqtt_config.password;')
 needle="ret = MQTTYield(&MQTTCli, 300);"
 if needle not in s: raise SystemExit("MQTTYield insertion point not found")
 s=s.replace(needle,needle+"\n            if(ret != FAILURE) baison_periodic(&MQTTCli);")
@@ -82,6 +82,11 @@ void baison_override_config(void) {
     g_mqtt_config.sub_qos=0;
     memset(g_mqtt_config.username,0,sizeof g_mqtt_config.username);
     memset(g_mqtt_config.password,0,sizeof g_mqtt_config.password);
+    if(baison_mqtt_credentials(mac,g_mqtt_config.username,sizeof g_mqtt_config.username,
+        g_mqtt_config.password,sizeof g_mqtt_config.password)!=0) {
+        /* No network authentication until a unique device secret exists. */
+        g_mqtt_config.enable_sub=0;
+    }
     baison_topics_init(mac,g_mqtt_config.sub_topic,sizeof g_mqtt_config.sub_topic,
                        g_mqtt_config.pub_topic,sizeof g_mqtt_config.pub_topic);
     snprintf(g_mqtt_config.clientid,sizeof g_mqtt_config.clientid,"baison-%s",mac);
