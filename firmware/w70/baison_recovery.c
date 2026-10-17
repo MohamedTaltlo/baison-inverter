@@ -1,4 +1,4 @@
-/* BAISON W70 V11 on-device recovery: independent HTTP firmware uploader.
+/* BAISON W70 V12 on-device recovery: independent HTTP firmware uploader.
  * LAN OTA with no passwords/codes by owner's explicit request.
  * DO NOT expose port 80/8080 to the public internet or guest WiFi.
  * Uses real HiFlying hfupdate_* OTA flash staging.
@@ -17,13 +17,19 @@ extern void baison_health_json(char*,unsigned);
 extern int baison_local_read(const char*,char*,unsigned);
 extern void baison_commands_json(char*,unsigned);
 
+extern const char baison_home_page[];
+extern const char *baison_wifi_ap_name(void);
+extern void baison_wifi_status_json(char*,unsigned);
+extern int baison_wifi_scan_json(char*,unsigned);
+extern int baison_wifi_save_form(const char*,unsigned);
+extern void baison_wifi_forget(void);
 static const char recovery_page[] =
 "<!DOCTYPE html><html><head><meta charset='utf-8'><meta name='viewport' content='width=device-width,initial-scale=1'>"
-"<title>BAISON W70 V11 Firmware Recovery</title>"
+"<title>BAISON W70 V12 Firmware Recovery</title>"
 "<style>body{font:16px Arial;max-width:650px;margin:2em auto;padding:16px}label{display:block;margin:16px 0}"
 "button,input{padding:10px}button{background:#135cc7;color:white;border:0;border-radius:6px}"
 "pre{white-space:pre-wrap;background:#f0f0f0;padding:12px}</style></head><body>"
-"<h2>BAISON W70 V11 - Firmware Recovery</h2>"
+"<h2>BAISON W70 V12 - Firmware Recovery</h2>"
 "<p>Firmware image must be a verified W70 EPORT-PW41 OTA .bin.</p>"
 "<p>Tests: <a href=/ping>Ping</a> | <a href=/status>Status</a> | <a href=/api/read?cmd=QPIGS>QPIGS</a> | <a href=/api/read?cmd=QPIRI>QPIRI</a></p>"
 "<p><b>OTA requires no codes.</b> Keep this device isolated on your own LAN.</p>"
@@ -151,8 +157,63 @@ static void connection_inner(int fd,char *hdr,char *msg) {
         }
     }
     if(body_offset==0){reply(fd,400,"text/plain","Incomplete HTTP request");return;}
+
+    if(strncmp(hdr,"GET /api/wifi/status ",21)==0) {
+        baison_wifi_status_json(msg,RESPONSE_CAP);
+        reply(fd,200,"application/json",msg);return;
+    }
+    if(strncmp(hdr,"GET /api/wifi/scan ",19)==0) {
+        if(baison_wifi_scan_json(msg,RESPONSE_CAP)!=0)
+            reply(fd,503,"application/json","{\"ok\":false,\"error\":\"wifi_scan_failed\"}");
+        else reply(fd,200,"application/json",msg);
+        return;
+    }
+    if(strncmp(hdr,"POST /api/system/restart ",25)==0) {
+        if(strstr(hdr,"X-W70-Action: confirm\r\n")==NULL) {
+            reply(fd,403,"text/plain","Action confirmation header required");return;
+        }
+        reply(fd,200,"text/plain","Restarting W70...");
+        msleep(1300);hfsys_reset();return;
+    }
+    if(strncmp(hdr,"POST /api/system/forget ",24)==0) {
+        if(strstr(hdr,"X-W70-Action: confirm\r\n")==NULL) {
+            reply(fd,403,"text/plain","Action confirmation header required");return;
+        }
+        baison_wifi_forget();
+        reply(fd,200,"text/plain","Wi-Fi credentials cleared. Rebooting into setup AP...");
+        msleep(1300);hfsys_reset();return;
+    }
+    if(strncmp(hdr,"POST /api/wifi/save ",20)==0) {
+        const char*sizev=header_value(hdr,"Content-Length:");
+        unsigned len,have;
+        char body[520];
+        int rc;
+        if(strstr(hdr,"X-W70-Action: confirm\r\n")==NULL ||
+           sizev==NULL) {
+            reply(fd,403,"text/plain","Confirmation and Content-Length required");return;
+        }
+        len=(unsigned)strtoul(sizev,NULL,10);
+        if(len==0 || len>512) {
+            reply(fd,400,"text/plain","Invalid Wi-Fi form length");return;
+        }
+        have=n-body_offset;
+        if(have>len)have=len;
+        if(have)memcpy(body,hdr+body_offset,have);
+        while(have<len) {
+            int bytes=recv(fd,body+have,len-have,0);
+            if(bytes<=0){reply(fd,400,"text/plain","Short Wi-Fi form");return;}
+            have+=(unsigned)bytes;
+        }
+        rc=baison_wifi_save_form(body,len);
+        memset(body,0,sizeof body);
+        if(rc!=0) {
+            reply(fd,400,"text/plain","Invalid SSID or password (8-63 characters for secured Wi-Fi)");return;
+        }
+        reply(fd,200,"text/plain","Wi-Fi saved. W70 restarting; reconnect to its new address.");
+        msleep(1600);hfsys_reset();return;
+    }
     if(strncmp(hdr,"GET /ping ",10)==0) {
-        reply(fd,200,"text/plain","BAISON-W70-V11: HTTP alive");
+        reply(fd,200,"text/plain","BAISON-W70-V12: HTTP alive");
         return;
     }
     if(strncmp(hdr,"GET /api/commands ",18)==0) {
@@ -174,7 +235,10 @@ static void connection_inner(int fd,char *hdr,char *msg) {
         baison_health_json(msg,800u);
         reply(fd,200,"application/json",msg);return;
     }
-    if(strncmp(hdr,"GET / ",6)==0||strncmp(hdr,"GET /hide ",10)==0||strncmp(hdr,"GET /hide.html ",15)==0){
+    if(strncmp(hdr,"GET / ",6)==0) {
+        reply(fd,200,"text/html; charset=utf-8",baison_home_page);return;
+    }
+    if(strncmp(hdr,"GET /hide ",10)==0||strncmp(hdr,"GET /hide.html ",15)==0){
         reply(fd,200,"text/html; charset=utf-8",recovery_page);return;
     }
     if(strncmp(hdr,"POST /api/firmware ",19)==0){upload(fd,hdr,n,body_offset);return;}
@@ -211,7 +275,7 @@ static void web_server(void *arg) {
         }
         if(listen(s,2)<0) {close(s);msleep(2000);continue;}
         baison_recovery_http_listening|=port==80?1u:2u;
-        u_printf("BAISON_V11_RECOVERY_HTTP_LISTEN %u\r\n",port);
+        u_printf("BAISON_V12_RECOVERY_HTTP_LISTEN %u\r\n",port);
         while(1) {
             struct sockaddr_in remote;
             socklen_t remotelen=sizeof remote;
@@ -228,5 +292,5 @@ static void web_server(void *arg) {
 void baison_recovery_start(void) {
     int a=hfthread_create(web_server,"baison_recovery8080",2048,(void*)(uintptr_t)8080,HFTHREAD_PRIORITIES_LOW,NULL,NULL);
     int b=hfthread_create(web_server,"baison_recovery80",2048,(void*)(uintptr_t)80,HFTHREAD_PRIORITIES_LOW,NULL,NULL);
-    u_printf("BAISON_V11_HTTP_TASKS %d %d\r\n",a,b);
+    u_printf("BAISON_V12_HTTP_TASKS %d %d\r\n",a,b);
 }
