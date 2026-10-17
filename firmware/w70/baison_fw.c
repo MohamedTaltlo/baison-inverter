@@ -22,14 +22,8 @@ static hfuart_handle_t serial_handle;
 static hfthread_mutex_t serial_mutex=NULL_MUTEX;
 static unsigned current_baud=2400;
 static unsigned consecutive_uart_failures=0;
-static uint32_t write_expires=0;
-static uint32_t write_pin=0;
-static char last_write_id[48];
 extern volatile int baison_mqtt_connected;
 extern volatile unsigned int baison_recovery_http_listening;
-static int until(uint32_t expiry) {
-    return expiry!=0 && (int32_t)(expiry-hfsys_get_time())>0;
-}
 int baison_at_ver(pat_session_t session,int argc,char *argv[],char *rsp,int len) {
     (void)session;(void)argv;
     if(argc) return -3;
@@ -43,14 +37,9 @@ int baison_at_ota(pat_session_t session,int argc,char *argv[],char *rsp,int len)
     return 0;
 }
 int baison_at_write(pat_session_t session,int argc,char *argv[],char *rsp,int len) {
-    (void)session;
-    if(argc==0) {snprintf(rsp,(size_t)len,"=%s",until(write_expires)?"ARMED":"OFF");return 0;}
-    if(argc!=1)return -3;
-    if(strcmp(argv[0],"OFF")==0){write_pin=0;write_expires=0;snprintf(rsp,(size_t)len,"=OFF");return 0;}
-    if(strcmp(argv[0],"ON")!=0)return -4;
-    write_pin=100000u+(hfsys_random()%900000u);
-    write_expires=hfsys_get_time()+120000u;
-    snprintf(rsp,(size_t)len,"=%06lu,120sec",(unsigned long)write_pin);
+    (void)session;(void)argv;
+    if(argc)return -3;
+    snprintf(rsp,(size_t)len,"=USE_LOCAL_WEB_CONFIRMATION");
     return 0;
 }
 int baison_at_uart(pat_session_t session,int argc,char *argv[],char *rsp,int len) {
@@ -65,7 +54,7 @@ int baison_at_uart(pat_session_t session,int argc,char *argv[],char *rsp,int len
 }
 void baison_health_json(char *out,unsigned cap) {
     snprintf(out,cap,"{\"version\":\"BAISON-W70-V12\",\"ota\":\"lan-no-code\",\"mqtt\":%d,\"serial_ready\":%d,\"uart_baud\":%u,\"write_armed\":%d,\"commands\":\"QPIGS,QPIRI,QMOD,QVFW,QID,QFLAG,POP00,POP01,PBT01,PBT02,MUCHGC010,PGR00\"}",
-        baison_mqtt_connected,serial_ready,current_baud,until(write_expires));
+        baison_mqtt_connected,serial_ready,current_baud,0);
 }
 static uint32_t next_poll=0;
 static const char b64map[]="ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
@@ -181,18 +170,9 @@ void baison_receive(MessageData *md) {
     if(!read_allowed(cmd) && !write_allowed(cmd)) {
         strcpy(queue_error,"unsupported_command");
     } else if(write_allowed(cmd)) {
-        char pin[16],expected[8];
-        if(!until(write_expires) || !write_pin) strcpy(queue_error,"physical_confirmation_required");
-        else if(get_json_string((const char*)md->message->payload,(unsigned)md->message->payloadlen,"pin",pin,sizeof pin)) strcpy(queue_error,"missing_confirmation");
-        else {
-            snprintf(expected,sizeof expected,"%06lu",(unsigned long)write_pin);
-            if(strcmp(pin,expected)!=0)strcpy(queue_error,"wrong_confirmation");
-            else if(strcmp(id,last_write_id)==0)strcpy(queue_error,"repeated_write_request");
-            else {
-                strcpy(last_write_id,id);
-                write_expires=0;write_pin=0; /* one-use authorization */
-            }
-        }
+        /* Disable MQTT setting writes until mtradius.online has per-device
+         * authentication, replay prevention, and audited authorization. */
+        strcpy(queue_error,"remote_settings_waiting_for_server_security");
     }
     strcpy(queue_cmd,cmd);strcpy(queue_id,id);queued=1;
 }
@@ -318,73 +298,61 @@ static void pi30_printable(const unsigned char *raw,unsigned n,char *dest,unsign
  * physically armed via BLE, requires explicit request confirmation, then
  * validates the inverter ACK and performs a fresh readback.
  */
-int baison_local_write(const char *cmd,const char *pin,const char *confirm,char*out,unsigned cap) {
+
+extern int baison_setting_verify(const char*,const char*);
+int baison_local_write(const char *cmd,const char *confirm,char*out,unsigned cap) {
     unsigned char response[PI30_RX_MAX];
     unsigned n=0;
-    char expected[8],decoded[PI30_RX_MAX],readback[PI30_RX_MAX];
+    char decoded[PI30_RX_MAX],readback[PI30_RX_MAX];
     const char *query=NULL;
-    int index=-1,rc,after;
+    int index=-1,rc,after,verified;
     if(!cmd || !baison_setting_rule(cmd,&query,&index))return -2;
     if(!confirm || strcmp(confirm,"YES")!=0)return -3;
-    if(!until(write_expires)||!write_pin || !pin)return -4;
-    snprintf(expected,sizeof expected,"%06lu",(unsigned long)write_pin);
-    if(strcmp(pin,expected)!=0)return -4;
-    /* Desktop application requires the charger current be one of the
-       actual values returned by this inverter. Do the same onboard. */
-    if(strncmp(cmd,"MNCHGC",6)==0||strncmp(cmd,"MUCHGC",6)==0) {
-        char caps[PI30_RX_MAX],number[5];
+    /* Current settings capability check before attempting a charge-current
+       change, exactly like the BAISON Windows application. */
+    if(strncmp(cmd,"MNCHGC",6)==0 || strncmp(cmd,"MUCHGC",6)==0) {
+        char caps[PI30_RX_MAX],number[6];
         const char *query_caps=strncmp(cmd,"MNCHGC",6)==0?"QMCHGCR":"QMUCHGCR";
-        int desired=atoi(cmd+strlen(cmd)-3),matched=0,rc_caps;
         unsigned p=0;
-        rc_caps=inverter_query(query_caps,response,sizeof response,&n);
-        if(rc_caps!=0)return -6;
+        int requested=atoi(cmd+strlen(cmd)-3),match=0;
+        if(inverter_query(query_caps,response,sizeof response,&n)!=0)return -6;
         pi30_printable(response,n,caps,sizeof caps);
-        while(caps[p]) {
+        while(caps[p]){
             unsigned q=0;
             while(caps[p]==' ')p++;
-            while(caps[p]>='0'&&caps[p]<='9'&&q<4)number[q++]=caps[p++];
+            while(caps[p]>='0'&&caps[p]<='9'&&q<5)number[q++]=caps[p++];
             number[q]=0;
-            if(q && atoi(number)==desired)matched=1;
-            while(caps[p] && caps[p]!=' ')p++;
+            if(q&&atoi(number)==requested)match=1;
+            while(caps[p]&&caps[p]!=' ')p++;
         }
-        if(!matched)return -6;
+        if(!match)return -6;
     }
-    /* Token is single-use even if the inverter times out or returns NAK. */
-    write_expires=0;write_pin=0;
     rc=inverter_query(cmd,response,sizeof response,&n);
-    if(rc!=0) {
-        snprintf(out,cap,"{\"cmd\":\"%s\",\"ok\":false,\"error\":\"%s\"}",
-             cmd,rc==-2?"inverter_nak":"write_no_ack");
+    if(rc!=0){
+        snprintf(out,cap,
+            "{\"cmd\":\"%s\",\"ok\":false,\"error\":\"%s\"}",
+            cmd,rc==-2?"inverter_nak":"write_no_ack");
         return 0;
     }
     pi30_printable(response,n,decoded,sizeof decoded);
-    if(strcmp(decoded,"ACK")!=0) {
-        snprintf(out,cap,"{\"cmd\":\"%s\",\"ok\":false,\"error\":\"unexpected_write_response\"}",cmd);
+    if(strcmp(decoded,"ACK")!=0){
+        snprintf(out,cap,
+            "{\"cmd\":\"%s\",\"ok\":false,\"error\":\"unexpected_write_response\"}",cmd);
         return 0;
     }
     msleep(250);
-    if(query==NULL || !read_allowed(query))return -5;
+    if(!query || !read_allowed(query))return -5;
     after=inverter_query(query,response,sizeof response,&n);
-    if(after!=0) {
-        snprintf(out,cap,"{\"cmd\":\"%s\",\"ok\":false,\"ack\":true,\"verified\":false,\"error\":\"readback_failed\"}",cmd);
+    if(after!=0){
+        snprintf(out,cap,
+           "{\"cmd\":\"%s\",\"ok\":true,\"ack\":true,\"verified\":false,\"error\":\"readback_failed\"}",cmd);
         return 0;
     }
     pi30_printable(response,n,readback,sizeof readback);
-    /* The full readback is exposed for UI verification. V12 deliberately
-       does not claim the requested setting was applied solely from ACK. */
-    {
-        unsigned p=0,i;
-        char compact[580];
-        for(i=0;readback[i] && p+3<sizeof compact;i++) {
-            unsigned char c=(unsigned char)readback[i];
-            if(c=='"'||c=='\\')compact[p++]='\\';
-            compact[p++]=(char)c;
-        }
-        compact[p]=0;
-        snprintf(out,cap,
-           "{\"cmd\":\"%s\",\"ok\":true,\"ack\":true,\"verified\":false,\"readback_command\":\"%s\",\"readback_index\":%d,\"readback\":\"%s\",\"note\":\"ACK accepted; compare the indexed value to confirm change\"}",
-           cmd,query,index,compact);
-    }
+    verified=baison_setting_verify(cmd,readback);
+    snprintf(out,cap,
+       "{\"cmd\":\"%s\",\"ok\":true,\"ack\":true,\"verified\":%s,\"readback_command\":\"%s\",\"readback_index\":%d,\"readback\":\"%s\"}",
+       cmd,verified==1?"true":"false",query,index,readback);
     return 0;
 }
 int baison_local_read(const char *cmd,char*out,unsigned cap) {
