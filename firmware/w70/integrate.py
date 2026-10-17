@@ -19,12 +19,16 @@ s=s.replace("hfgpio_configure_pin(0x3830015,0x20000000); // To power on Air780e 
 s=s.replace("hfdbg_set_level(1);","hfdbg_set_level(0);")
 s=s.replace("hfthread_create(uart_bridge, \"uart_bridge\", 256, NULL, HFTHREAD_PRIORITIES_LOW, NULL,NULL);",
             "baison_serial_init();\n    baison_recovery_start();\n    mqtt_para_init();\n    baison_override_config();\n    mqtt_start();\n    u_printf(\"BAISON_W70_OTA_V7_BOOT\\r\\n\");")
-s=s.replace("#include <hf_debug.h>","#include <hf_debug.h>\n#include \"mqtt.h\"\nextern void baison_serial_init(void);\nextern void baison_override_config(void);\nextern void mqtt_start(void);
+s=s.replace("#include <hf_debug.h>", """#include <hf_debug.h>
+#include "mqtt.h"
+extern void baison_serial_init(void);
+extern void baison_override_config(void);
+extern void mqtt_start(void);
 extern void baison_recovery_start(void);
 extern int baison_at_ver(pat_session_t,int,char**,char*,int);
 extern int baison_at_ota(pat_session_t,int,char**,char*,int);
 extern int baison_at_write(pat_session_t,int,char**,char*,int);
-extern int baison_at_uart(pat_session_t,int,char**,char*,int);")
+extern int baison_at_uart(pat_session_t,int,char**,char*,int);""")
 s=s.replace("{NULL,NULL,NULL,NULL} //the last item must be null",
 """{"BAISONVER",baison_at_ver,"BAISON firmware version",NULL},
     {"BAISONOTA",baison_at_ota,"Arm firmware update for 180 seconds",NULL},
