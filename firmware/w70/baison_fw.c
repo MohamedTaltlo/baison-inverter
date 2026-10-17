@@ -67,9 +67,8 @@ int baison_at_write(pat_session_t session,int argc,char *argv[],char *rsp,int le
     if(argc!=1)return -3;
     if(strcmp(argv[0],"OFF")==0){write_pin=0;write_expires=0;snprintf(rsp,(size_t)len,"=OFF");return 0;}
     if(strcmp(argv[0],"ON")!=0)return -4;
-    write_pin=100000u+(hfsys_random()%900000u);
     write_expires=hfsys_get_time()+120000u;
-    snprintf(rsp,(size_t)len,"=%06lu,120sec",(unsigned long)write_pin);
+    snprintf(rsp,(size_t)len,"=ARMED,120sec");
     return 0;
 }
 int baison_at_uart(pat_session_t session,int argc,char *argv[],char *rsp,int len) {
