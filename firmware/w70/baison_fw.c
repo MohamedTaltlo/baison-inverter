@@ -19,6 +19,7 @@ static char queue_cmd[16], queue_id[48], queue_error[40];
 static int queued=0;
 static int serial_ready=0;
 static hfuart_handle_t serial_handle;
+static hfthread_mutex_t serial_mutex=NULL_MUTEX;
 static unsigned current_baud=2400;
 static unsigned consecutive_uart_failures=0;
 static uint32_t write_expires=0;
@@ -207,7 +208,7 @@ static void publish(Client *client,const char *topic,const char *text) {
     msg.payloadlen=strlen(text);
     MQTTPublish(client,topic,&msg);
 }
-static int inverter_query(const char *cmd,unsigned char *out,unsigned cap,unsigned *outlen) {
+static int inverter_query_inner(const char *cmd,unsigned char *out,unsigned cap,unsigned *outlen) {
     unsigned char tx[32];unsigned n=(unsigned)strlen(cmd),total=0;
     uint16_t crc;
     uint32_t start;
@@ -230,6 +231,26 @@ static int inverter_query(const char *cmd,unsigned char *out,unsigned cap,unsign
         }
     }
     return -1;
+}
+static int inverter_query(const char *cmd,unsigned char *out,unsigned cap,unsigned *outlen) {
+    int res;
+    if(serial_mutex!=NULL_MUTEX)hfthread_mutext_lock(serial_mutex);
+    res=inverter_query_inner(cmd,out,cap,outlen);
+    if(serial_mutex!=NULL_MUTEX)hfthread_mutext_unlock(serial_mutex);
+    return res;
+}
+int baison_local_read(const char *cmd,char*out,unsigned cap) {
+    unsigned char response[PI30_RX_MAX];
+    unsigned n=0;
+    char encoded[520];
+    if(!read_allowed(cmd))return -1;
+    if(inverter_query(cmd,response,sizeof response,&n)!=0) {
+        snprintf(out,cap,"{\"cmd\":\"%s\",\"ok\":false,\"error\":\"inverter_timeout\",\"uart_baud\":%u}",cmd,current_baud);
+        return 0;
+    }
+    if(encode64(response,n,encoded,sizeof encoded)<0)return -1;
+    snprintf(out,cap,"{\"cmd\":\"%s\",\"ok\":true,\"co\":\"%s\",\"uart_baud\":%u}",cmd,encoded,current_baud);
+    return 0;
 }
 void baison_periodic(Client *client) {
     unsigned char response[PI30_RX_MAX];unsigned response_len=0;
@@ -266,6 +287,7 @@ void baison_periodic(Client *client) {
     publish(client,manual?topic_reply:topic_readings,packet);
 }
 void baison_serial_init(void) {
+    hfthread_mutext_new(&serial_mutex);
     serial_handle=hfuart_open(0);
     if(serial_handle) {
         /* Voltronic 2400 baud is a first-test assumption, not confirmed for BAISON W70. */
