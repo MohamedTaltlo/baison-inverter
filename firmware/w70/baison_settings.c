@@ -82,3 +82,59 @@ int baison_setting_rule(const char *cmd,const char **readback,int *index) {
     }
     return 0;
 }
+
+
+/* Check the actual current setting returned by QPIRI or QFLAG, not merely
+ * the ACK from the inverter. Return 1 verified, 0 mismatched, -1 invalid. */
+int baison_setting_verify(const char *cmd,const char *readback) {
+    const char *query=NULL;
+    const setting_rule *rule=NULL;
+    int idx=-1;
+    unsigned i,p=0,current=0;
+    char token[64];
+    const char *suffix=NULL;
+    char *end;
+    double actual,wanted,diff;
+    if(!readback||!baison_setting_rule(cmd,&query,&idx))return -1;
+    if(idx<0) {
+        const char *sep;
+        const char *start;
+        const char *stop;
+        char flag=cmd[2];
+        if(readback[0]!='E')return 0;
+        sep=strchr(readback,'D');
+        if(!sep)return 0;
+        if(cmd[1]=='E'){start=readback+1;stop=sep;}
+        else {start=sep+1;stop=readback+strlen(readback);}
+        for(;start<stop;start++)if(*start==flag)return 1;
+        return 0;
+    }
+    for(i=0;i<sizeof(rules)/sizeof(rules[0]);i++){
+        unsigned length=(unsigned)strlen(rules[i].prefix);
+        if(strncmp(cmd,rules[i].prefix,length)==0) {
+            rule=rules+i;suffix=cmd+length;break;
+        }
+    }
+    if(!rule||!suffix)return -1;
+    for(i=0;readback[i];) {
+        unsigned n=0;
+        while(readback[i]==' '||readback[i]=='\t')i++;
+        if(!readback[i])break;
+        while(readback[i]&&readback[i]!=' '&&readback[i]!='\t'){
+            if(n+1<sizeof token)token[n++]=readback[i];
+            i++;
+        }
+        token[n]=0;
+        if((int)current==idx){
+            actual=strtod(token,&end);
+            if(end==token||*end)return 0;
+            wanted=strtod(suffix,&end);
+            if(end==suffix||*end)return 0;
+            diff=actual-wanted;
+            return diff>-0.051 && diff<0.051;
+        }
+        current++;
+    }
+    (void)p;
+    return 0;
+}
