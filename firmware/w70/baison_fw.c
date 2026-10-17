@@ -1,6 +1,6 @@
 /*
  * BAISON W70 V7 inverter bridge, BLE recovery and physically confirmed write commands.
- * PI30 with one-time BLE local authorization for settings; development broker 1883 no TLS.
+ * V20 separates MQTT network polling and UART work to prevent watchdog pressure.
  * NOT production security. Physical W70/OTA compatibility unverified.
  */
 #include <hsf.h>
@@ -30,7 +30,7 @@ static int baison_enrolled(void);
 int baison_at_ver(pat_session_t session,int argc,char *argv[],char *rsp,int len) {
     (void)session;(void)argv;
     if(argc) return -3;
-    snprintf(rsp,(size_t)len,"=BAISON-W70-V18,baud=%u,mqtt=%d,http=%u,ota=LAN_NO_CODE",current_baud,baison_mqtt_connected,baison_recovery_http_listening);
+    snprintf(rsp,(size_t)len,"=BAISON-W70-V20,baud=%u,mqtt=%d,http=%u,ota=LAN_NO_CODE",current_baud,baison_mqtt_connected,baison_recovery_http_listening);
     return 0;
 }
 int baison_at_ota(pat_session_t session,int argc,char *argv[],char *rsp,int len) {
@@ -56,7 +56,7 @@ int baison_at_uart(pat_session_t session,int argc,char *argv[],char *rsp,int len
     snprintf(rsp,(size_t)len,"=%u",current_baud);return 0;
 }
 void baison_health_json(char *out,unsigned cap) {
-    snprintf(out,cap,"{\"version\":\"BAISON-W70-V18\",\"ota\":\"lan-no-code\",\"mqtt\":%d,\"remote_ready\":%s,\"protocol\":2,\"serial_ready\":%d,\"uart_baud\":%u,\"commands\":\"QPIGS,QPIRI,QMOD,QVFW,QID,QSID,QFLAG,POP00,POP01,PBT01,PBT02,MUCHGC010,PGR00,PF\"}",
+    snprintf(out,cap,"{\"version\":\"BAISON-W70-V20\",\"ota\":\"lan-no-code\",\"mqtt\":%d,\"remote_ready\":%s,\"protocol\":2,\"serial_ready\":%d,\"uart_baud\":%u,\"commands\":\"QPIGS,QPIRI,QMOD,QVFW,QID,QSID,QFLAG,POP00,POP01,PBT01,PBT02,MUCHGC010,PGR00,PF\"}",
         baison_mqtt_connected,baison_enrolled()?"true":"false",serial_ready,current_baud);
 }
 
@@ -490,12 +490,16 @@ int baison_local_read(const char *cmd,char*out,unsigned cap) {
     }
     return 0;
 }
-void baison_periodic(Client *client) {
+static volatile int baison_pending_ready=0;
+static volatile int baison_pending_reply=0;
+static char baison_pending_packet[900];
+static volatile int baison_worker_started=0;
+static void baison_worker_iteration(void) {
     unsigned char response[PI30_RX_MAX];unsigned response_len=0;
     char encoded[520],packet[720],cmd[28],id[48];
     int manual;
     uint32_t now;
-    if(!client)return;
+    if(!baison_mqtt_connected || baison_pending_ready)return;
     now=hfsys_get_time();
     if(!queued && (int32_t)(now-next_poll)<0)return;
     manual=queued;
@@ -518,7 +522,9 @@ void baison_periodic(Client *client) {
             else snprintf(packet,sizeof(packet),
                  "{\"v\":2,\"id\":\"%s\",\"cmd\":\"%s\",\"result\":%s}",id,cmd,written);
             queued_write=0;
-            publish(client,topic_reply,packet);
+            snprintf(baison_pending_packet,sizeof(baison_pending_packet),"%s",packet);
+            baison_pending_reply=1;
+            baison_pending_ready=1;
             return;
         }
         rc=inverter_query(cmd,response,sizeof response,&response_len);
@@ -539,7 +545,9 @@ void baison_periodic(Client *client) {
     }
     /* Observed device UART works at 2400 baud. Do not change it in the
        background just because a single PI30 query was rejected or delayed. */
-    publish(client,manual?topic_reply:topic_readings,packet);
+    snprintf(baison_pending_packet,sizeof(baison_pending_packet),"%s",packet);
+    baison_pending_reply=manual;
+    baison_pending_ready=1;
 }
 /* Factory pairing is injected into the private OTA image at packaging.
  * The public placeholder is deliberately all-zero: it must never pair.
@@ -578,10 +586,40 @@ int baison_mqtt_credentials(const char *mac, char *user,unsigned usercap,
     return 0;
 }
 
+static void baison_poll_worker(void *unused) {
+    uint32_t link_start=0;
+    (void)unused;
+    for(;;) {
+        if(!baison_mqtt_connected) {
+            link_start=0;
+            msleep(300);
+            continue;
+        }
+        if(!link_start)link_start=hfsys_get_time();
+        /* Allow WLAN/MQTT to settle before the first UART request. */
+        if((uint32_t)(hfsys_get_time()-link_start)<7000u) {
+            msleep(250);continue;
+        }
+        baison_worker_iteration();
+        msleep(200);
+    }
+}
+void baison_periodic(Client *client) {
+    if(!client || !baison_pending_ready)return;
+    if(MQTTPublish(client,baison_pending_reply?topic_reply:topic_readings,
+        &(MQTTMessage){.qos=QOS0,.payload=(void*)baison_pending_packet,
+        .payloadlen=strlen(baison_pending_packet)})==SUCCESS) {
+        baison_pending_ready=0;
+    }
+}
 void baison_serial_init(void) {
     baison_factory_pair_once();
     hfthread_mutext_new(&serial_mutex);
     serial_handle=hfuart_open(0);
+    if(!baison_worker_started) {
+        if(hfthread_create(baison_poll_worker,"baison_inv_uart",4096,NULL,
+           HFTHREAD_PRIORITIES_LOW,NULL,NULL)==HF_SUCCESS)baison_worker_started=1;
+    }
     if(serial_handle) {
         /* Voltronic 2400 baud is a first-test assumption, not confirmed for BAISON W70. */
         serial_ready=(hfuart_config(serial_handle,(int)current_baud,COMPARITY_NONE,COMBITS_8,COMSTOPBITS_1,COMUARTNFC)==HF_SUCCESS);
