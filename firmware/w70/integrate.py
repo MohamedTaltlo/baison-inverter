@@ -22,7 +22,7 @@ if "hfthread_create(uart_bridge," not in s:
 s=s.replace("hfgpio_configure_pin(0x3830015,0x20000000); // To power on Air780e onboard chip","/* SWB1 has no Air780e: do not energize unrelated GPIO. */")
 s=s.replace("hfdbg_set_level(1);","hfdbg_set_level(0);")
 s=s.replace("hfthread_create(uart_bridge, \"uart_bridge\", 256, NULL, HFTHREAD_PRIORITIES_LOW, NULL,NULL);",
-            "baison_wifi_boot_config();\n    baison_serial_init();\n    baison_recovery_start();\n    mqtt_para_init();\n    baison_override_config();\n    mqtt_start();\n    u_printf(\"BAISON_W70_OTA_V18_BOOT\\r\\n\");")
+            "baison_wifi_boot_config();\n    baison_serial_init();\n    baison_recovery_start();\n    mqtt_para_init();\n    baison_override_config();\n    mqtt_start();\n    u_printf(\"BAISON_W70_OTA_V20_BOOT\\r\\n\");")
 s=s.replace("#include <hf_debug.h>", """#include <hf_debug.h>
 #include "mqtt.h"
 extern void baison_serial_init(void);
@@ -52,6 +52,9 @@ p=root/"src/mqtt.c"
 s=p.read_text(encoding="latin-1")
 s=s.replace('#include "MQTTClient.h"','#include "MQTTClient.h"\nextern void baison_topics_init(const char*,char*,unsigned,char*,unsigned);\nextern void baison_receive(MessageData*);\nextern void baison_periodic(Client*);\nextern int baison_mqtt_credentials(const char*,char*,unsigned,char*,unsigned);')
 s=s.replace("static void mqtt_start(void)","void mqtt_start(void)")
+# V20: MQTT thread must not run with a 512-unit stack when TLS/auth enabled.
+s=s.replace('hfthread_create(MQTTClient_thread, "MQTT_Cli", 512, NULL,',
+            'hfthread_create(MQTTClient_thread, "MQTT_Cli", 4096, NULL,')
 s=s.replace("static int mqtt_is_connected = 0;","volatile int baison_mqtt_connected = 0;")
 s=s.replace("mqtt_is_connected","baison_mqtt_connected")
 start=s.find("static void topic_message_callback(MessageData* md)\n{")
@@ -93,4 +96,4 @@ void baison_override_config(void) {
 }
 """
 p.write_text(s,encoding="latin-1")
-print("SDK V18 patch successful (BLE AT, HTTP OTA, PI30 commands)")
+print("SDK V20 patch successful (BLE AT, HTTP OTA, PI30 commands)")
