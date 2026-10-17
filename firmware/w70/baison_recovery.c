@@ -16,6 +16,8 @@
 extern void baison_health_json(char*,unsigned);
 extern int baison_local_read(const char*,char*,unsigned);
 extern void baison_commands_json(char*,unsigned);
+extern void baison_identity_json(char*,unsigned);
+extern int baison_enroll_hex(const char*);
 
 extern const char baison_home_page[];
 extern const char baison_settings_page[];
@@ -193,6 +195,37 @@ static void connection_inner(int fd,char *hdr,char *msg) {
     if(strncmp(hdr,"GET /settings ",14)==0) {
         reply(fd,200,"text/html; charset=utf-8",baison_settings_page);return;
     }
+    if(strncmp(hdr,"GET /api/device/identity ",strlen("GET /api/device/identity "))==0) {
+        baison_identity_json(msg,RESPONSE_CAP);
+        reply(fd,200,"application/json",msg);
+        return;
+    }
+    if(strncmp(hdr,"POST /api/device/enroll ",strlen("POST /api/device/enroll "))==0) {
+        char key[44],form[80];
+        unsigned len,have;
+        int enrolled;
+        const char *length_text=header_value(hdr,"Content-Length:");
+        if(!length_text||!strstr(hdr,"X-W70-Action: confirm\\r\\n")) {
+           reply(fd,403,"application/json","{\\"ok\\":false,\\"error\\":\\"local_confirmation_required\\"}");return;
+        }
+        len=(unsigned)strtoul(length_text,NULL,10);
+        if(len<44||len>=sizeof(form)){reply(fd,400,"text/plain","invalid enrollment payload");return;}
+        have=n-body_offset;if(have>len)have=len;
+        if(have)memcpy(form,hdr+body_offset,have);
+        while(have<len){
+            int bytes=recv(fd,form+have,len-have,0);
+            if(bytes<=0){reply(fd,400,"text/plain","partial payload");return;}
+            have+=(unsigned)bytes;
+        }
+        if(form_extract(form,len,"key",key,sizeof(key))!=0) {
+           memset(form,0,sizeof(form));reply(fd,400,"text/plain","invalid key form");return;
+        }
+        memset(form,0,sizeof(form));
+        enrolled=baison_enroll_hex(key);memset(key,0,sizeof(key));
+        if(enrolled==0)reply(fd,200,"application/json","{\\"ok\\":true,\\"enrolled\\":true}");
+        else reply(fd,403,"application/json","{\\"ok\\":false,\\"error\\":\\"already_enrolled_or_invalid_key\\"}");
+        return;
+    }
     if(strncmp(hdr,"GET /api/wifi/status ",21)==0) {
         baison_wifi_status_json(msg,RESPONSE_CAP);
         reply(fd,200,"application/json",msg);return;
@@ -276,7 +309,7 @@ static void connection_inner(int fd,char *hdr,char *msg) {
         msleep(1600);hfsys_reset();return;
     }
     if(strncmp(hdr,"GET /ping ",10)==0) {
-        reply(fd,200,"text/plain","BAISON-W70-V13: HTTP alive");
+        reply(fd,200,"text/plain","BAISON-W70-V18: HTTP alive");
         return;
     }
     if(strncmp(hdr,"GET /api/commands ",18)==0) {
@@ -338,7 +371,7 @@ static void web_server(void *arg) {
         }
         if(listen(s,2)<0) {close(s);msleep(2000);continue;}
         baison_recovery_http_listening|=port==80?1u:2u;
-        u_printf("BAISON_V13_RECOVERY_HTTP_LISTEN %u\r\n",port);
+        u_printf("BAISON_V18_RECOVERY_HTTP_LISTEN %u\r\n",port);
         while(1) {
             struct sockaddr_in remote;
             socklen_t remotelen=sizeof remote;
@@ -356,5 +389,5 @@ void baison_recovery_start(void) {
     int a=hfthread_create(web_server,"baison_recovery8080",2048,(void*)(uintptr_t)8080,HFTHREAD_PRIORITIES_LOW,NULL,NULL);
     int b=hfthread_create(web_server,"baison_recovery80",2048,(void*)(uintptr_t)80,HFTHREAD_PRIORITIES_LOW,NULL,NULL);
     baison_wifi_start_scan_worker();
-    u_printf("BAISON_V13_HTTP_TASKS %d %d\r\n",a,b);
+    u_printf("BAISON_V18_HTTP_TASKS %d %d\r\n",a,b);
 }
