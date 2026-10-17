@@ -19,10 +19,12 @@ extern void baison_commands_json(char*,unsigned);
 
 extern const char baison_home_page[];
 extern const char baison_settings_page[];
-extern int baison_local_write(const char*,const char*,const char*,char*,unsigned);
+extern int baison_local_write(const char*,const char*,char*,unsigned);
 extern const char *baison_wifi_ap_name(void);
 extern void baison_wifi_status_json(char*,unsigned);
 extern int baison_wifi_scan_json(char*,unsigned);
+extern void baison_wifi_scan_request(void);
+extern void baison_wifi_start_scan_worker(void);
 extern int baison_wifi_save_form(const char*,unsigned);
 extern void baison_wifi_forget(void);
 static const char recovery_page[] =
@@ -165,7 +167,7 @@ static void connection_inner(int fd,char *hdr,char *msg) {
     int got;
     unsigned n=0,body_offset=0;
     struct timeval tm;
-    tm.tv_sec=10;tm.tv_usec=0;
+    tm.tv_sec=15;tm.tv_usec=0;
     setsockopt(fd,SOL_SOCKET,SO_RCVTIMEO,&tm,sizeof tm);
     tm.tv_sec=5;tm.tv_usec=0;
     setsockopt(fd,SOL_SOCKET,SO_SNDTIMEO,&tm,sizeof tm);
@@ -179,7 +181,13 @@ static void connection_inner(int fd,char *hdr,char *msg) {
             if(term){body_offset=(unsigned)(term-hdr)+4;break;}
         }
     }
-    if(body_offset==0){reply(fd,400,"text/plain","Incomplete HTTP request");return;}
+    if(body_offset==0){
+        /* A TCP handshake, browser preconnect or truncated client request is
+         * not a full HTTP transaction. Close silently instead of surfacing
+         * "Incomplete HTTP request" as a user-facing application error. */
+        if(n>0) reply(fd,408,"text/plain","HTTP request timed out before headers completed");
+        return;
+    }
 
     if(strncmp(hdr,"GET /settings ",14)==0) {
         reply(fd,200,"text/html; charset=utf-8",baison_settings_page);return;
@@ -188,9 +196,10 @@ static void connection_inner(int fd,char *hdr,char *msg) {
         baison_wifi_status_json(msg,RESPONSE_CAP);
         reply(fd,200,"application/json",msg);return;
     }
-    if(strncmp(hdr,"GET /api/wifi/scan ",19)==0) {
+    if(strncmp(hdr,"GET /api/wifi/scan",18)==0) {
+        if(strstr(hdr,"?refresh=1")) baison_wifi_scan_request();
         if(baison_wifi_scan_json(msg,RESPONSE_CAP)!=0)
-            reply(fd,503,"application/json","{\"ok\":false,\"error\":\"wifi_scan_failed\"}");
+            reply(fd,503,"application/json","{\"ok\":false,\"error\":\"scan_unavailable\"}");
         else reply(fd,200,"application/json",msg);
         return;
     }
@@ -210,7 +219,7 @@ static void connection_inner(int fd,char *hdr,char *msg) {
         msleep(1300);hfsys_reset();return;
     }
     if(strncmp(hdr,"POST /api/inverter/write ",25)==0) {
-        char form[220],cmd[38],pin[9];
+        char form[220],cmd[38];
         const char*sizev=header_value(hdr,"Content-Length:");
         unsigned len,have;
         int rc;
@@ -228,13 +237,11 @@ static void connection_inner(int fd,char *hdr,char *msg) {
            have+=(unsigned)count;
         }
         rc=form_extract(form,len,"command",cmd,sizeof cmd);
-        if(rc==0)rc=form_extract(form,len,"pin",pin,sizeof pin);
         memset(form,0,sizeof form);
         if(rc!=0){reply(fd,400,"text/plain","Missing command or authorization");return;}
-        rc=baison_local_write(cmd,pin,"YES",msg,RESPONSE_CAP);
-        memset(pin,0,sizeof pin);
+        rc=baison_local_write(cmd,"YES",msg,RESPONSE_CAP);
         if(rc!=0){
-           reply(fd,403,"application/json","{\"ok\":false,\"error\":\"invalid_command_or_local_authorization\"}");return;
+           reply(fd,400,"application/json","{\"ok\":false,\"error\":\"invalid_command_or_unavailable_setting\"}");return;
         }
         reply(fd,200,"application/json",msg);return;
     }
@@ -347,5 +354,6 @@ static void web_server(void *arg) {
 void baison_recovery_start(void) {
     int a=hfthread_create(web_server,"baison_recovery8080",2048,(void*)(uintptr_t)8080,HFTHREAD_PRIORITIES_LOW,NULL,NULL);
     int b=hfthread_create(web_server,"baison_recovery80",2048,(void*)(uintptr_t)80,HFTHREAD_PRIORITIES_LOW,NULL,NULL);
+    baison_wifi_start_scan_worker();
     u_printf("BAISON_V12_HTTP_TASKS %d %d\r\n",a,b);
 }
