@@ -87,6 +87,9 @@ void baison_commands_json(char *out,unsigned cap) {
     "{\"v\":12,\"query_format\":\"Q + uppercase letters and digits, 2-24 chars\","
     "\"queries\":\"QPI,QID,QSID,QVFW,QVFW2,QVFW3,QPIRI,QFLAG,QPIGS,QPIGS2,QMOD,QPIWS,QDI,QMCHGCR,QMUCHGCR,QOPPT,QCHPT,QT,QBEQI,QMN,QGMN,QET,QLT,QPGS0,QPGS1\","
     "\"verified_writes\":\"POP00,POP01,PBT01,PBT02,MUCHGC010,PGR00\","
+    "\"settings\":\"POP,PCP,PGR,PBT,PBCV,PBDV,PSDV,PCVV,PBFT,MNCHGC,MUCHGC,F,V,PSPB,PPVOKC\","
+    "\"flags\":\"a,b,k,u,v,x,y,z via PE/PD\","
+    "\"requires\":\"BLE one-use local authorization and inverter ACK plus readback\","
     "\"note\":\"Query availability varies by inverter; settings commands are restricted\"}");
 }
 extern int baison_setting_rule(const char*,const char**,int*);
