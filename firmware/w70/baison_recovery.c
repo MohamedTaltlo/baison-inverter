@@ -14,6 +14,7 @@
 extern int baison_check_ota_pin(const char*);
 extern void baison_ota_finish(void);
 extern void baison_health_json(char*,unsigned);
+extern int baison_local_read(const char*,char*,unsigned);
 
 static const char recovery_page[] =
 "<!DOCTYPE html><html><head><meta charset='utf-8'><meta name='viewport' content='width=device-width,initial-scale=1'>"
@@ -23,6 +24,7 @@ static const char recovery_page[] =
 "pre{white-space:pre-wrap;background:#f0f0f0;padding:12px}</style></head><body>"
 "<h2>BAISON W70 V7 - Firmware Recovery</h2>"
 "<p>Firmware image must be a verified W70 EPORT-PW41 OTA .bin.</p>"
+"<p>Local inverter test: <a href=/api/read?cmd=QPIGS>QPIGS</a> | <a href=/api/read?cmd=QPIRI>QPIRI</a> | <a href=/status>Status</a></p>"
 "<p>1. Connect by BLE FED4; send AT+BAISONOTA=ON (HEX 41 54 2B 42 41 49 53 4F 4E 4F 54 41 3D 4F 4E 0D).</p>"
 "<p>2. Use the six-digit response code within three minutes.</p>"
 "<label>OTA code <input type='text' id='pin' maxlength='6' inputmode='numeric'></label>"
@@ -139,6 +141,16 @@ static void connection(int fd) {
         }
     }
     if(body_offset==0){reply(fd,400,"text/plain","Incomplete HTTP request");return;}
+    if(strncmp(hdr,"GET /api/read?cmd=",18)==0) {
+        char cmd[20];
+        const char *p=hdr+18;
+        unsigned k=0;
+        while(p[k] && p[k]!=' ' && p[k]!='&' && k<sizeof cmd-1){cmd[k]=p[k];k++;}
+        cmd[k]=0;
+        if(baison_local_read(cmd,msg,sizeof msg)!=0) reply(fd,400,"text/plain","Unsupported read command");
+        else reply(fd,200,"application/json",msg);
+        return;
+    }
     if(strncmp(hdr,"GET /status ",12)==0||strncmp(hdr,"GET /api/status ",16)==0){
         baison_health_json(msg,sizeof msg);
         reply(fd,200,"application/json",msg);return;
