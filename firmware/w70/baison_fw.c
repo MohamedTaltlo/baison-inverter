@@ -329,6 +329,26 @@ int baison_local_write(const char *cmd,const char *pin,const char *confirm,char*
     if(!until(write_expires)||!write_pin || !pin)return -4;
     snprintf(expected,sizeof expected,"%06lu",(unsigned long)write_pin);
     if(strcmp(pin,expected)!=0)return -4;
+    /* Desktop application requires the charger current be one of the
+       actual values returned by this inverter. Do the same onboard. */
+    if(strncmp(cmd,"MNCHGC",6)==0||strncmp(cmd,"MUCHGC",6)==0) {
+        char caps[PI30_RX_MAX],number[5];
+        const char *query_caps=strncmp(cmd,"MNCHGC",6)==0?"QMCHGCR":"QMUCHGCR";
+        int desired=atoi(cmd+strlen(cmd)-3),matched=0,rc_caps;
+        unsigned p=0;
+        rc_caps=inverter_query(query_caps,response,sizeof response,&n);
+        if(rc_caps!=0)return -6;
+        pi30_printable(response,n,caps,sizeof caps);
+        while(caps[p]) {
+            unsigned q=0;
+            while(caps[p]==' ')p++;
+            while(caps[p]>='0'&&caps[p]<='9'&&q<4)number[q++]=caps[p++];
+            number[q]=0;
+            if(q && atoi(number)==desired)matched=1;
+            while(caps[p] && caps[p]!=' ')p++;
+        }
+        if(!matched)return -6;
+    }
     /* Token is single-use even if the inverter times out or returns NAK. */
     write_expires=0;write_pin=0;
     rc=inverter_query(cmd,response,sizeof response,&n);
