@@ -73,9 +73,9 @@ needle="ret = MQTTYield(&MQTTCli, 300);"
 if needle not in s: raise SystemExit("MQTTYield insertion point not found")
 s=s.replace(needle,needle+"\n            if(ret != FAILURE) baison_periodic(&MQTTCli);")
 # V21: give W70 HTTP/UI and STA association time to settle before MQTT connects.
-s=s.replace("HF_Debug(MQTT_DEBUG_LEVEL, \"connected.\\r\n\");",
-            "msleep(12000);\n        if(!hfwifi_sta_is_connected())continue;\n        HF_Debug(MQTT_DEBUG_LEVEL, \"connected.\\r\n\");")
-s=s.replace("msleep(3000);\n\\t}", "msleep(8000);\n\\t}")
+s=s.replace('HF_Debug(MQTT_DEBUG_LEVEL, "connected.\\r\\n");',
+            'msleep(12000);\n        if(!hfwifi_sta_is_connected())continue;\n        HF_Debug(MQTT_DEBUG_LEVEL, "connected.\\r\\n");')
+s=s.replace("msleep(3000);\n\t}", "msleep(8000);\n\t}")
 # This config is temporary, development-only and uses plaintext MQTT/1883.
 s+="""
 void baison_override_config(void) {
