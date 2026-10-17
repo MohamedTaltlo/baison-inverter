@@ -274,7 +274,7 @@ static int inverter_query_inner(const char *cmd,unsigned char *out,unsigned cap,
             out[total++]=tmp[i];
             if(tmp[i]==0x0D && total>=5) {
                 if(frame_crc_ok(out,total)) {
-                    if(total==6 && memcmp(out,"(NAK",4)==0) {
+                    if(total==7 && memcmp(out,"(NAK",4)==0) {
                         if(outlen)*outlen=total;
                         return -2;
                     }
@@ -298,17 +298,41 @@ static int inverter_query(const char *cmd,unsigned char *out,unsigned cap,unsign
     if(serial_mutex!=NULL_MUTEX)hfthread_mutext_unlock(serial_mutex);
     return res;
 }
+
+/* The response includes only readable PI30 payload, not CRC or trailing CR.
+ * The original Base64 'co' field is retained for server-side compatibility. */
+static void pi30_printable(const unsigned char *raw,unsigned n,char *dest,unsigned cap) {
+    unsigned p=0,i;
+    if(!cap)return;
+    for(i=1;i+3<n&&p+2<cap;i++) {
+        unsigned char c=raw[i];
+        if(c<32 || c>126)c='?';
+        if(c=='"'||c=='\\')dest[p++]='\\';
+        dest[p++]=(char)c;
+    }
+    dest[p]=0;
+}
 int baison_local_read(const char *cmd,char*out,unsigned cap) {
     unsigned char response[PI30_RX_MAX];
     unsigned n=0;
-    char encoded[520];
+    char encoded[520],decoded[PI30_RX_MAX];
+    int rc,printed;
     if(!read_allowed(cmd))return -1;
-    if(inverter_query(cmd,response,sizeof response,&n)!=0) {
-        snprintf(out,cap,"{\"cmd\":\"%s\",\"ok\":false,\"error\":\"inverter_timeout\",\"uart_baud\":%u}",cmd,current_baud);
+    rc=inverter_query(cmd,response,sizeof response,&n);
+    if(rc==-1 || rc==-3) {
+        snprintf(out,cap,"{\"cmd\":\"%s\",\"ok\":false,\"error\":\"%s\",\"uart_baud\":%u}",
+            cmd,rc==-3?"stale_response_mismatch":"inverter_timeout",current_baud);
         return 0;
     }
+    pi30_printable(response,n,decoded,sizeof decoded);
     if(encode64(response,n,encoded,sizeof encoded)<0)return -1;
-    snprintf(out,cap,"{\"cmd\":\"%s\",\"ok\":true,\"co\":\"%s\",\"uart_baud\":%u}",cmd,encoded,current_baud);
+    printed=snprintf(out,cap,
+         "{\"cmd\":\"%s\",\"ok\":%s,\"response\":\"%s\",\"co\":\"%s\",\"uart_baud\":%u%s}",
+         cmd,rc==0?"true":"false",decoded,encoded,current_baud,
+         rc==-2?",\"error\":\"nak\"":"");
+    if(printed<0 || (unsigned)printed>=cap) {
+        snprintf(out,cap,"{\"cmd\":\"%s\",\"ok\":false,\"error\":\"response_too_long\"}",cmd);
+    }
     return 0;
 }
 void baison_periodic(Client *client) {
