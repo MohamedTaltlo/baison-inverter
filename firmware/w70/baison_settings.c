@@ -43,6 +43,7 @@ static int digits(const char*txt,unsigned n) {
 int baison_setting_rule(const char *cmd,const char **readback,int *index) {
     unsigned i,j,n;
     if(!cmd)return 0;
+    if(strcmp(cmd,"PF")==0) { if(readback)*readback="QPIRI"; if(index)*index=-2; return 1; }
     n=(unsigned)strlen(cmd);
     if(n<3||n>36)return 0;
     /* Flags from settings.py, lower-case letters are intentional. */
@@ -96,6 +97,9 @@ int baison_setting_verify(const char *cmd,const char *readback) {
     char *end;
     double actual,wanted,diff;
     if(!readback||!baison_setting_rule(cmd,&query,&idx))return -1;
+    /* PF acknowledges a factory reset; firmware cannot prove all default
+       settings from a single QPIRI response, so report unverified. */
+    if(strcmp(cmd,"PF")==0)return 0;
     if(idx<0) {
         const char *sep;
         const char *start;
