@@ -18,6 +18,11 @@ jobs:
       - name: Clone HiFlying SDK
         run: |
           git clone --depth 1 https://github.com/freshev/BL602-UART-bridge.git sdk_upstream
+      - name: Validate RTL UI, JavaScript and setting value readback
+        run: |
+          python3 firmware/w70/tests/check_ui.py
+          gcc -std=c99 -Wall -Wextra -O2 -o /tmp/test_w70_settings firmware/w70/baison_settings.c firmware/w70/tests/test_settings.c
+          /tmp/test_w70_settings
       - name: Integrate BAISON read-only firmware
         run: |
           python3 firmware/w70/integrate.py
