@@ -33,7 +33,7 @@ static int until(uint32_t expiry) {
 int baison_at_ver(pat_session_t session,int argc,char *argv[],char *rsp,int len) {
     (void)session;(void)argv;
     if(argc) return -3;
-    snprintf(rsp,(size_t)len,"=BAISON-W70-V11,baud=%u,mqtt=%d,http=%u,ota=LAN_NO_CODE",current_baud,baison_mqtt_connected,baison_recovery_http_listening);
+    snprintf(rsp,(size_t)len,"=BAISON-W70-V12,baud=%u,mqtt=%d,http=%u,ota=LAN_NO_CODE",current_baud,baison_mqtt_connected,baison_recovery_http_listening);
     return 0;
 }
 int baison_at_ota(pat_session_t session,int argc,char *argv[],char *rsp,int len) {
@@ -64,7 +64,7 @@ int baison_at_uart(pat_session_t session,int argc,char *argv[],char *rsp,int len
     snprintf(rsp,(size_t)len,"=%u",current_baud);return 0;
 }
 void baison_health_json(char *out,unsigned cap) {
-    snprintf(out,cap,"{\"version\":\"BAISON-W70-V11\",\"ota\":\"lan-no-code\",\"mqtt\":%d,\"serial_ready\":%d,\"uart_baud\":%u,\"write_armed\":%d,\"commands\":\"QPIGS,QPIRI,QMOD,QVFW,QID,QFLAG,POP00,POP01,PBT01,PBT02,MUCHGC010,PGR00\"}",
+    snprintf(out,cap,"{\"version\":\"BAISON-W70-V12\",\"ota\":\"lan-no-code\",\"mqtt\":%d,\"serial_ready\":%d,\"uart_baud\":%u,\"write_armed\":%d,\"commands\":\"QPIGS,QPIRI,QMOD,QVFW,QID,QFLAG,POP00,POP01,PBT01,PBT02,MUCHGC010,PGR00\"}",
         baison_mqtt_connected,serial_ready,current_baud,until(write_expires));
 }
 static uint32_t next_poll=0;
@@ -84,16 +84,14 @@ static int read_allowed(const char *s) {
 }
 void baison_commands_json(char *out,unsigned cap) {
     snprintf(out,cap,
-    "{\"v\":11,\"query_format\":\"Q + uppercase letters and digits, 2-24 chars\","
+    "{\"v\":12,\"query_format\":\"Q + uppercase letters and digits, 2-24 chars\","
     "\"queries\":\"QPI,QID,QSID,QVFW,QVFW2,QVFW3,QPIRI,QFLAG,QPIGS,QPIGS2,QMOD,QPIWS,QDI,QMCHGCR,QMUCHGCR,QOPPT,QCHPT,QT,QBEQI,QMN,QGMN,QET,QLT,QPGS0,QPGS1\","
     "\"verified_writes\":\"POP00,POP01,PBT01,PBT02,MUCHGC010,PGR00\","
     "\"note\":\"Query availability varies by inverter; settings commands are restricted\"}");
 }
-static int write_allowed(const char *s) {
-    static const char *v[]={"POP00","POP01","PBT01","PBT02","MUCHGC010","PGR00"};
-    unsigned i;
-    for(i=0;i<sizeof(v)/sizeof(v[0]);i++)if(strcmp(v[i],s)==0)return 1;
-    return 0;
+extern int baison_setting_rule(const char*,const char**,int*);
+static int write_allowed(const char *cmd) {
+    return baison_setting_rule(cmd,NULL,NULL);
 }
 static uint16_t xmodem(const unsigned char *b,unsigned n) {
     uint16_t c=0;unsigned i,k;
